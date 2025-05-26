@@ -993,7 +993,7 @@ internal class Nct677X : ISuperIO
 
     private bool IsNuvotonVendor()
     {
-        return Chip is Chip.NCT6683D or Chip.NCT6686D or Chip.NCT6687D or Chip.NCT6687DR || ((ReadByte(VENDOR_ID_HIGH_REGISTER) << 8) | ReadByte(VENDOR_ID_LOW_REGISTER)) == NUVOTON_VENDOR_ID;
+        return Chip is Chip.NCT6683D or Chip.NCT6686D or Chip.NCT6687D or Chip.NCT6687DR or Chip.NCT6701D || ((ReadByte(VENDOR_ID_HIGH_REGISTER) << 8) | ReadByte(VENDOR_ID_LOW_REGISTER)) == NUVOTON_VENDOR_ID;
     }
 
     private void Set6687DRControl(int index, byte? value)
@@ -1013,7 +1013,7 @@ internal class Nct677X : ISuperIO
             else
             {
                 // Write 7-point fan curve
-                for (int count = 0; count < 14; count = count + 2)
+                for (int count = 0; count < 14; count += 2)
                 {
                     targetFanCurveAddr = initFanCurveReg+count;
                     targetFanCurveReg = Convert.ToUInt16(targetFanCurveAddr);
