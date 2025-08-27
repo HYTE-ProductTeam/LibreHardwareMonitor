@@ -25,6 +25,24 @@ internal static class Ring0
 
     public static void Open()
     {
+        try
+        {
+            var modulesDir = Path.Combine(AppContext.BaseDirectory, "modules");
+            if (Directory.Exists(modulesDir) && PawnIoBackend.Initialize(modulesDir))
+            {
+                _report.Length = 0;
+                _report.AppendLine("Status: PawnIO backend active");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _report.AppendLine("PawnIO init failed: " + ex.Message);
+            // 繼續嘗試舊的 WinRing0…（如果你想完全替換，可直接 return）
+        }
+
+        return;
+
         // no implementation for unix systems
         if (Software.OperatingSystem.IsUnix)
             return;
@@ -330,12 +348,13 @@ internal static class Ring0
 
     public static bool ReadMsr(uint index, out ulong edxeax)
     {
-        if (_driver == null)
+        if (PawnIoBackend.IsReady)
         {
-            edxeax = 0;
-            return false;
+            try { edxeax = PawnIoBackend.ReadMsr(index); return true; }
+            catch { edxeax = 0; return false; }
         }
 
+        if (_driver == null) { edxeax = 0; return false; }
         ulong buffer = 0;
         bool result = _driver.DeviceIOControl(Interop.Ring0.IOCTL_OLS_READ_MSR, index, ref buffer);
         edxeax = buffer;
@@ -344,10 +363,21 @@ internal static class Ring0
 
     public static bool ReadMsr(uint index, out uint eax, out uint edx, GroupAffinity affinity)
     {
-        GroupAffinity previousAffinity = ThreadAffinity.Set(affinity);
-        bool result = ReadMsr(index, out eax, out edx);
-        ThreadAffinity.Set(previousAffinity);
-        return result;
+        if (PawnIoBackend.IsReady)
+        {
+            try
+            {
+                ulong v = PawnIoBackend.ReadMsr(index); // 64-bit
+                edx = (uint)((v >> 32) & 0xFFFFFFFF);
+                eax = (uint)(v & 0xFFFFFFFF);
+                return true;
+            }
+            catch
+            {
+                eax = edx = 0;
+                return false;
+            }
+        }
     }
 
     public static bool WriteMsr(uint index, uint eax, uint edx)
@@ -361,9 +391,13 @@ internal static class Ring0
 
     public static byte ReadIoPort(uint port)
     {
-        if (_driver == null)
-            return 0;
+        if (PawnIoBackend.IsReady)
+        {
+            try { return PawnIoBackend.PioRead((ushort)port); }
+            catch { return 0; }
+        }
 
+        if (_driver == null) return 0;
         uint value = 0;
         _driver.DeviceIOControl(Interop.Ring0.IOCTL_OLS_READ_IO_PORT_BYTE, port, ref value);
         return (byte)(value & 0xFF);
@@ -371,9 +405,14 @@ internal static class Ring0
 
     public static void WriteIoPort(uint port, byte value)
     {
-        if (_driver == null)
+        if (PawnIoBackend.IsReady)
+        {
+            try { PawnIoBackend.PioWrite((ushort)port, value); }
+            catch { /* log if you want */ }
             return;
+        }
 
+        if (_driver == null) return;
         WriteIoPortInput input = new() { PortNumber = port, Value = value };
         _driver.DeviceIOControl(Interop.Ring0.IOCTL_OLS_WRITE_IO_PORT_BYTE, input);
     }
