@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -13,7 +14,8 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
 
         public PawnIoSession()
         {
-            if (PawnIOLib.pawnio_open(out var h) != 0)
+            int rc = PawnIOLib.pawnio_open(out var h);
+            if (rc != 0)
                 throw new Exception("pawnio_open failed");
             Handle = h;
         }
@@ -22,7 +24,11 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         {
             var blob = File.ReadAllBytes(path);
             int rc = PawnIOLib.pawnio_load(Handle, blob, (UIntPtr)blob.Length);
-            if (rc != 0) throw new Exception($"pawnio_load failed: {Path.GetFileName(path)}");
+            if (rc != 0)
+            {
+                Debug.WriteLine($"can't load file {path}, error: {rc}");
+            }
+                //throw new Exception($"pawnio_load failed: {Path.GetFileName(path)}");
         }
 
         public void Dispose()

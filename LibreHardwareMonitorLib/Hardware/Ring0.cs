@@ -4,6 +4,7 @@
 // Partial Copyright (C) Michael Möller <mmoeller@openhardwaremonitor.org> and Contributors.
 // All Rights Reserved.
 
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -11,6 +12,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using LibreHardwareMonitor.Hardware.PawnIO;
 
 namespace LibreHardwareMonitor.Hardware;
 
@@ -21,91 +23,38 @@ internal static class Ring0
 
     private static readonly StringBuilder _report = new();
 
-    public static bool IsOpen => _driver != null;
+    public static bool IsOpen => _pawnIO != null;
+
+    private static PawnIoBackend _pawnIO;
 
     public static void Open()
     {
-        try
+        var modulesDir = @"D:\Git\HYTE_Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
+        _pawnIO = new PawnIoBackend(modulesDir);
+        if (Directory.Exists(modulesDir) && _pawnIO != null)
         {
-            var modulesDir = Path.Combine(AppContext.BaseDirectory, "modules");
-            if (Directory.Exists(modulesDir) && PawnIoBackend.Initialize(modulesDir))
-            {
-                _report.Length = 0;
-                _report.AppendLine("Status: PawnIO backend active");
-                return;
-            }
+            _report.Length = 0;
+            _report.AppendLine("Status: PawnIO backend active");
+            return;
         }
-        catch (Exception ex)
-        {
-            _report.AppendLine("PawnIO init failed: " + ex.Message);
-            // 繼續嘗試舊的 WinRing0…（如果你想完全替換，可直接 return）
-        }
+        //try
+        //{
+        //    var modulesDir = @"D:\Git\HYTE_Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
+        //    _pawnIO = new PawnIoBackend(modulesDir);
+        //    if (Directory.Exists(modulesDir) && _pawnIO != null)
+        //    {
+        //        _report.Length = 0;
+        //        _report.AppendLine("Status: PawnIO backend active");
+        //        return;
+        //    }
+        //}
+        //catch (Exception ex)
+        //{
+        //    _report.AppendLine("PawnIO init failed: " + ex.Message);
+        //    // 繼續嘗試舊的 WinRing0…（如果你想完全替換，可直接 return）
+        //}
 
         return;
-
-        // no implementation for unix systems
-        if (Software.OperatingSystem.IsUnix)
-            return;
-
-        if (_driver != null)
-            return;
-
-        // clear the current report
-        _report.Length = 0;
-
-        _driver = new KernelDriver(GetServiceName(), "WinRing0_1_2_0");
-        _driver.Open();
-
-        if (!_driver.IsOpen)
-        {
-            // driver is not loaded, try to install and open
-            _filePath = GetFilePath();
-            if (_filePath != null && Extract(_filePath))
-            {
-                if (_driver.Install(_filePath, out string installError))
-                {
-                    _driver.Open();
-
-                    if (!_driver.IsOpen)
-                        _report.AppendLine("Status: Opening driver failed after install");
-                }
-                else
-                {
-                    // install failed, try to delete and reinstall
-                    _driver.Delete();
-
-                    // wait a short moment to give the OS a chance to remove the driver
-                    Thread.Sleep(2000);
-
-                    if (_driver.Install(_filePath, out string secondError))
-                    {
-                        _driver.Open();
-
-                        if (!_driver.IsOpen)
-                            _report.AppendLine("Status: Opening driver failed after reinstall");
-                    }
-                    else
-                    {
-                        _report.Append($"Status: Installing driver \"{_filePath}\" failed").AppendLine(File.Exists(_filePath) ? " and file exists" : string.Empty);
-                        _report.Append("First Exception: ").AppendLine(installError);
-                        _report.Append("Second Exception: ").AppendLine(secondError);
-                    }
-                }
-
-                if (!_driver.IsOpen)
-                {
-                    _driver.Delete();
-                    Delete();
-                }
-            }
-            else
-            {
-                _report.AppendLine("Status: Extracting driver failed");
-            }
-        }
-
-        if (!_driver.IsOpen)
-            _driver = null;
     }
 
     private static bool Extract(string filePath)
@@ -348,26 +297,32 @@ internal static class Ring0
 
     public static bool ReadMsr(uint index, out ulong edxeax)
     {
-        if (PawnIoBackend.IsReady)
-        {
-            try { edxeax = PawnIoBackend.ReadMsr(index); return true; }
-            catch { edxeax = 0; return false; }
-        }
+        edxeax = 0; // 預設值
 
-        if (_driver == null) { edxeax = 0; return false; }
-        ulong buffer = 0;
-        bool result = _driver.DeviceIOControl(Interop.Ring0.IOCTL_OLS_READ_MSR, index, ref buffer);
-        edxeax = buffer;
-        return result;
+        if (IsOpen && _pawnIO != null)
+        {
+            try
+            {
+                edxeax = _pawnIO.ReadMsr(index);
+                Debug.WriteLine($"MSR 0x{index:X} = 0x{edxeax:X16}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"MSR 0x{index:X} failed: {ex.Message}");
+                return false; // edxeax 保持為 0
+            }
+        }
+        return false;
     }
 
     public static bool ReadMsr(uint index, out uint eax, out uint edx, GroupAffinity affinity)
     {
-        if (PawnIoBackend.IsReady)
+        if (IsOpen)
         {
             try
             {
-                ulong v = PawnIoBackend.ReadMsr(index); // 64-bit
+                ulong v = _pawnIO.ReadMsr(index); // 64-bit
                 edx = (uint)((v >> 32) & 0xFFFFFFFF);
                 eax = (uint)(v & 0xFFFFFFFF);
                 return true;
@@ -378,6 +333,8 @@ internal static class Ring0
                 return false;
             }
         }
+        eax = edx = 0;
+        return false;
     }
 
     public static bool WriteMsr(uint index, uint eax, uint edx)
@@ -391,9 +348,9 @@ internal static class Ring0
 
     public static byte ReadIoPort(uint port)
     {
-        if (PawnIoBackend.IsReady)
+        if (IsOpen)
         {
-            try { return PawnIoBackend.PioRead((ushort)port); }
+            try { return _pawnIO.SioRead((byte)port); }
             catch { return 0; }
         }
 
@@ -405,9 +362,9 @@ internal static class Ring0
 
     public static void WriteIoPort(uint port, byte value)
     {
-        if (PawnIoBackend.IsReady)
+        if (IsOpen)
         {
-            try { PawnIoBackend.PioWrite((ushort)port, value); }
+            try { _pawnIO.SioWrite((byte)port, value); }
             catch { /* log if you want */ }
             return;
         }
