@@ -1,6 +1,7 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
 
+using LibreHardwareMonitor.Hardware;
 using PawnIOTest;
 
 Console.WriteLine("Hello, World!");
@@ -9,4 +10,9 @@ Console.WriteLine("Hello, World!");
 //monitor.RunMonitor();
 
 VerifyPawnIO verifyPawnIO = new VerifyPawnIO();
-verifyPawnIO.Step10_TestAlternativeModulesCorrectFormat();
+verifyPawnIO.FullDiagnostics();
+//Ring0.Open();
+//PawnIoSmokeTest.Main();
+
+//TestProgram.Main();
+

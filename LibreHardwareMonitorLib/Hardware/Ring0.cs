@@ -16,7 +16,7 @@ using LibreHardwareMonitor.Hardware.PawnIO;
 
 namespace LibreHardwareMonitor.Hardware;
 
-internal static class Ring0
+public static class Ring0
 {
     private static KernelDriver _driver;
     private static string _filePath;
@@ -29,7 +29,7 @@ internal static class Ring0
 
     public static void Open()
     {
-        var modulesDir = @"D:\Git\HYTE_Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
+        var modulesDir = @"D:\Git\Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
         _pawnIO = new PawnIoBackend(modulesDir);
         if (Directory.Exists(modulesDir) && _pawnIO != null)
         {
@@ -318,23 +318,32 @@ internal static class Ring0
 
     public static bool ReadMsr(uint index, out uint eax, out uint edx, GroupAffinity affinity)
     {
-        if (IsOpen)
+        if (!IsOpen)
         {
-            try
-            {
-                ulong v = _pawnIO.ReadMsr(index); // 64-bit
-                edx = (uint)((v >> 32) & 0xFFFFFFFF);
-                eax = (uint)(v & 0xFFFFFFFF);
-                return true;
-            }
-            catch
-            {
-                eax = edx = 0;
-                return false;
-            }
+            eax = edx = 0;
+            return false;
         }
-        eax = edx = 0;
-        return false;
+
+        // 先把目前執行緒 pin 到指定邏輯處理器，取得「舊的」affinity 以便復原
+        GroupAffinity prev = ThreadAffinity.Set(affinity);
+        try
+        {
+            ulong v = _pawnIO.ReadMsr(index); // ← 這行會在被 pin 的 CPU 上執行
+            edx = (uint)(v >> 32);
+            eax = (uint)v;
+            return true;
+        }
+        catch
+        {
+            eax = edx = 0;
+            return false;
+        }
+        finally
+        {
+            // 復原：如果 Set 成功回了有效值，就切回去
+            if (prev != GroupAffinity.Undefined)
+                ThreadAffinity.Set(prev);
+        }
     }
 
     public static bool WriteMsr(uint index, uint eax, uint edx)
@@ -350,8 +359,15 @@ internal static class Ring0
     {
         if (IsOpen)
         {
-            try { return _pawnIO.SioRead((byte)port); }
-            catch { return 0; }
+            try
+            {
+                // 這裡要用 In8 (ioctl_pio_read)，而不是 SioRead
+                return _pawnIO.In8((ushort)port);
+            }
+            catch
+            {
+                return 0xFF; // port 無效就回 0xFF，比較符合硬體習慣
+            }
         }
 
         if (_driver == null) return 0;
@@ -364,14 +380,17 @@ internal static class Ring0
     {
         if (IsOpen)
         {
-            try { _pawnIO.SioWrite((byte)port, value); }
-            catch { /* log if you want */ }
+            try
+            {
+                // 同樣改成 Out8 (ioctl_pio_write)
+                _pawnIO.Out8((ushort)port, value);
+            }
+            catch
+            {
+                // 這裡可以 log
+            }
             return;
         }
-
-        if (_driver == null) return;
-        WriteIoPortInput input = new() { PortNumber = port, Value = value };
-        _driver.DeviceIOControl(Interop.Ring0.IOCTL_OLS_WRITE_IO_PORT_BYTE, input);
     }
 
     public static uint GetPciAddress(byte bus, byte device, byte function)

@@ -276,48 +276,44 @@ internal sealed class IntelCpu : GenericCpu
         }
 
         // set timeStampCounterMultiplier
-        switch (_microArchitecture)
+        double mult = 0;
+
+        // 1) 先嘗試：帶 affinity 讀 MSR_PLATFORM_INFO(0xCE) 的 nominal ratio（對多個邏輯核心嘗試，任一成功即可）
+        for (int i = 0; i < _cpuId.Length && mult <= 0; i++)
         {
-            case MicroArchitecture.Atom:
-            case MicroArchitecture.Core:
-            case MicroArchitecture.NetBurst:
-                if (Ring0.ReadMsr(IA32_PERF_STATUS, out uint _, out uint edx))
-                    _timeStampCounterMultiplier = ((edx >> 8) & 0x1f) + (0.5 * ((edx >> 14) & 1));
-
-                break;
-            case MicroArchitecture.Airmont:
-            case MicroArchitecture.AlderLake:
-            case MicroArchitecture.ArrowLake:
-            case MicroArchitecture.Broadwell:
-            case MicroArchitecture.CannonLake:
-            case MicroArchitecture.CometLake:
-            case MicroArchitecture.Goldmont:
-            case MicroArchitecture.GoldmontPlus:
-            case MicroArchitecture.Haswell:
-            case MicroArchitecture.IceLake:
-            case MicroArchitecture.IvyBridge:
-            case MicroArchitecture.JasperLake:
-            case MicroArchitecture.KabyLake:
-            case MicroArchitecture.LunarLake:
-            case MicroArchitecture.Nehalem:
-            case MicroArchitecture.MeteorLake:
-            case MicroArchitecture.RaptorLake:
-            case MicroArchitecture.RocketLake:
-            case MicroArchitecture.SandyBridge:
-            case MicroArchitecture.Silvermont:
-            case MicroArchitecture.Skylake:
-            case MicroArchitecture.TigerLake:
-            case MicroArchitecture.SapphireRapids:
-            case MicroArchitecture.ElkhartLake:
-            case MicroArchitecture.Tremont:
-                if (Ring0.ReadMsr(MSR_PLATFORM_INFO, out eax, out uint _))
-                    _timeStampCounterMultiplier = (eax >> 8) & 0xff;
-
-                break;
-            default:
-                _timeStampCounterMultiplier = 0;
-                break;
+            if (Ring0.ReadMsr(MSR_PLATFORM_INFO, out uint eaxPI, out _, _cpuId[i][0].Affinity))
+            {
+                mult = (eaxPI >> 8) & 0xFF; // nominal ratio
+            }
         }
+
+        // 2) 後備：CPUID.0x16 取 BaseMHz（假設外頻 100MHz → ratio = BaseMHz / 100）
+        if (mult <= 0)
+        {
+            try
+            {
+                // 注意：_cpuId[0][0].Data 的維度要夠大才讀得到 0x16 這個 leaf
+                if (_cpuId[0][0].Data.GetLength(0) > 0x16)
+                {
+                    uint eax16 = _cpuId[0][0].Data[0x16, 0];
+                    int baseMHz = (int)(eax16 & 0xFFFF); // EAX[15:0]
+                    if (baseMHz > 0)
+                        mult = baseMHz / 100.0;
+                }
+            }
+            catch { /* 某些舊 CPU 不支援 leaf 0x16 */ }
+        }
+
+        // 3) 最後退：IA32_PERF_STATUS(0x198) 的 legacy nominal ratio（舊欄位）
+        if (mult <= 0)
+        {
+            if (Ring0.ReadMsr(IA32_PERF_STATUS, out _, out uint edxLegacy, _cpuId[0][0].Affinity))
+            {
+                double legacy = ((edxLegacy >> 8) & 0x1F) + (0.5 * ((edxLegacy >> 14) & 1));
+                if (legacy > 0) mult = legacy;
+            }
+        }
+        _timeStampCounterMultiplier = mult;
 
         int coreSensorId = 0;
 

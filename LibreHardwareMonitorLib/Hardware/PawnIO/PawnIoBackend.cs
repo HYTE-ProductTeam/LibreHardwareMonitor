@@ -13,13 +13,29 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         private readonly PawnIoModule _modSmbus;     // AMD 晶片組可選
         //private readonly PawnIoModule _modRyzenSmu;  // 需要 CPU 功耗才載
         private readonly PawnIoModule _modMsr;
-
+        private U32 _lpcDetectedType;
         public PawnIoBackend(string modulesDir)
         {
-            _modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
-            _modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
-            _modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusPIIX4.bin"), "SmbusPIIX4.bin");
-            _modMsr = new PawnIoModule(Path.Combine(modulesDir, "AMDFamily17.bin"), "AMDFamily17.bin");
+            try
+            {
+                _modMsr = new PawnIoModule(Path.Combine(modulesDir, "IntelMSR.bin"), "IntelMSR.bin");
+                _modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
+                _modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
+                _modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusI801.bin"), "SmbusPIIX4.bin");
+                
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error loading PawnIO modules: {ex.Message}");
+                Dispose();
+                throw;
+            }
+
+            _lpcDetectedType = DetectLpcIo(_modLpcIo.Handle, 0);
+            if (_lpcDetectedType.Val == 0)
+                _lpcDetectedType = DetectLpcIo(_modLpcIo.Handle, 1);
+
+            Debug.WriteLine($"LpcIO detected type=0x{_lpcDetectedType.Val:X}");
 
             Probe(_modLpcIo);
             Probe(_modEc);
