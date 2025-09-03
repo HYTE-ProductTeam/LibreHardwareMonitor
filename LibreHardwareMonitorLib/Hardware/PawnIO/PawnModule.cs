@@ -3,7 +3,7 @@ using System.IO;
 
 namespace LibreHardwareMonitor.Hardware.PawnIO
 {
-    sealed class PawnIoModule : IDisposable
+    public sealed class PawnIoModule : IDisposable
     {
         public IntPtr Handle { get; private set; } = IntPtr.Zero;
 

@@ -6,11 +6,11 @@ using PawnIOTest;
 
 Console.WriteLine("Hello, World!");
 
-//PawnIOTest.Monitor monitor = new();
-//monitor.RunMonitor();
+PawnIOTest.Monitor monitor = new();
+monitor.RunMonitor();
 
-VerifyPawnIO verifyPawnIO = new VerifyPawnIO();
-verifyPawnIO.FullDiagnostics();
+//VerifyPawnIO verifyPawnIO = new VerifyPawnIO();
+//verifyPawnIO.FullDiagnostics();
 //Ring0.Open();
 //PawnIoSmokeTest.Main();
 

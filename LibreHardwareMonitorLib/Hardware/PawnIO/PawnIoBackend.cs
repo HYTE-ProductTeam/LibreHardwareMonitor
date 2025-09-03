@@ -18,11 +18,28 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         {
             try
             {
-                _modMsr = new PawnIoModule(Path.Combine(modulesDir, "IntelMSR.bin"), "IntelMSR.bin");
-                _modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
-                _modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
-                _modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusI801.bin"), "SmbusPIIX4.bin");
-                
+                var result = PawnIoBootstrap.InitializeAll(modulesDir);
+
+                // 取得已載入的模組
+                var msr = result.Msr;     // 可能是 IntelMSR / AMDFamilyXX / null
+                var lpcIo = result.LpcIo;   // LpcIO（桌機風扇/電壓）
+                var ec = result.Ec;      // LpcACPIEC（筆電 EC）
+                var smbus = result.Smbus;   // SmbusI801 或 SmbusPIIX4
+                                            // （可選）AMD 更完整監控/控制
+                var ryzen = result.RyzenSmu;
+
+                // 看看偵測輸出
+                foreach (var line in result.Log) Console.WriteLine(line);
+
+                //_modMsr = new PawnIoModule(Path.Combine(modulesDir, "IntelMSR.bin"), "IntelMSR.bin");
+                //_modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
+                //_modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
+                //_modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusI801.bin"), "SmbusPIIX4.bin");
+
+                _modMsr = result.Msr;
+                _modLpcIo = result.LpcIo;
+                _modEc = result.Ec;
+                _modSmbus = result.Smbus;
             }
             catch (Exception ex)
             {
