@@ -3,11 +3,21 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:components="clr-namespace:pawnIO_test_app.Components"
         xmlns:local="clr-namespace:pawnIO_test_app"
+        xmlns:fanControl="clr-namespace:pawnIO_test_app.Components.FanControl"
         mc:Ignorable="d"
-        Title="MainWindow" Height="800" Width="530">
+        Title="MainWindow" Height="840" Width="730" Closing="Window_Closing">
 
-    <ScrollViewer Height="800" VerticalScrollBarVisibility="Auto">
-        <StackPanel x:Name="SensorPanel" Orientation="Vertical"/>
-    </ScrollViewer>
+    <StackPanel Orientation="Horizontal">
+        <components:SideMenu x:Name="SideMenuComp"/>
+        <StackPanel x:Name="InfoPanel">
+            <ScrollViewer Height="800" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="SensorPanel" Orientation="Vertical"/>
+            </ScrollViewer>
+        </StackPanel>
+        <StackPanel x:Name="FanPanel" Visibility="Hidden">
+            <fanControl:FanPage/>
+        </StackPanel>
+    </StackPanel>
 </Window>

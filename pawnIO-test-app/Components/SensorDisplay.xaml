@@ -6,10 +6,11 @@
              xmlns:local="clr-namespace:pawnIO_test_app.Components"
              mc:Ignorable="d" 
              d:DesignHeight="20" d:DesignWidth="500">
-    
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" MouseEnter="Mouse_Enter" MouseLeave="Mouse_Leave">
-        <TextBlock Text="device name" x:Name="NameTB" Margin="0,0,70,0" Width="200"/>
-        <TextBlock Text="0%" x:Name="ValueTB" Width="100" Margin="0,0,20,0" TextAlignment="Center"/>
-        <TextBlock Text="100%" x:Name="MaxValueTB" Width="100" TextAlignment="Center"/>
-    </StackPanel>
+    <Border BorderThickness="0,1,0,0" BorderBrush="LightGray">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" MouseEnter="Mouse_Enter" MouseLeave="Mouse_Leave">
+            <TextBlock Text="device name" x:Name="NameTB" Margin="0,0,70,0" Width="200"/>
+            <TextBlock Text="0%" x:Name="ValueTB" Width="100" Margin="0,0,20,0" TextAlignment="Center"/>
+            <TextBlock Text="100%" x:Name="MaxValueTB" Width="100" TextAlignment="Center"/>
+        </StackPanel>
+    </Border>
 </UserControl>

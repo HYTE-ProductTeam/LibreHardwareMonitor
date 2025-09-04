@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using LibreHardwareMonitor.Hardware;
+﻿using LibreHardwareMonitor.Hardware;
 
 namespace pawnIO_test_app.Controller
 {
@@ -29,6 +24,8 @@ namespace pawnIO_test_app.Controller
 
         public Computer Computer => _computer;
 
+        public List<FanController> Fans => _fanControllers;
+
         public Action DataUpdated { get; set; }
 
         private readonly Computer _computer;
@@ -37,9 +34,12 @@ namespace pawnIO_test_app.Controller
 
         private bool _startGetData = false;
 
+        private List<FanController> _fanControllers = [];
+
         private LibrehardwareHelper()
         {
             _computer = GetComputer();
+            GetFans();
             StartGetData();
         }
 
@@ -82,6 +82,59 @@ namespace pawnIO_test_app.Controller
                     }
                 }
             });
+        }
+
+        private void GetFans()
+        {
+            foreach (IHardware hardware in _computer.Hardware)
+            {
+                foreach (IHardware subhardware in hardware.SubHardware)
+                {
+                    _fanControllers.AddRange(ProcessSensors(subhardware));
+                }
+
+                _fanControllers.AddRange(ProcessSensors(hardware));
+            }
+        }
+
+        private IEnumerable<FanController> ProcessSensors(IHardware hardware)
+        {
+            List<ISensor> sensors = [.. hardware.Sensors];
+
+            var controls = sensors
+                .Where(x => x.SensorType == SensorType.Control && x.Name.Contains("Fan")).ToList();
+
+            var fans = sensors
+                .Where(x => x.SensorType == SensorType.Fan && x.Name.Contains("Fan")).ToList();
+
+            foreach (var fan in fans)
+            {
+                var control = controls.Find(x => x.Name == fan.Name);
+                if (control != null)
+                {
+                    yield return CheckSensorAndPairSensors(fan, control);
+                }
+                else
+                {
+                    yield return CheckSensorAndPairSensors(fan);
+                }
+            }
+        }
+
+        private FanController CheckSensorAndPairSensors(ISensor rpmSensor, ISensor percentageSensor = null)
+        {
+            var name = rpmSensor.Name;
+            var hardwareInfo = new FanController(name, percentageSensor, rpmSensor);
+
+            return hardwareInfo;
+        }
+
+        public void SetFanToDefault()
+        {
+            foreach(var fan in _fanControllers)
+            {
+                fan.SetDefault();
+            }
         }
     }
 }

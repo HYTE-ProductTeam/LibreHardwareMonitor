@@ -13,7 +13,7 @@ namespace PawnIOTest
 {
     public class VerifyPawnIO
     {
-        public string modulesDir = @"D:\Git\Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
+        public string modulesDir = @"D:\Git\HYTE_Nexus\LibreHardwareMonitor\LibreHardwareMonitorLib\modules";
 
         // 使用正確的 ulong[] 格式測試 MSR
         public void Step8_TestCorrectFormat()

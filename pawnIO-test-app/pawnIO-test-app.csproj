@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,6 +8,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <Target Name="CopyModules" AfterTargets="Build">
+    <ItemGroup>
+      <ModuleFiles Include="..\LibreHardwareMonitorLib\modules\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModuleFiles)"
+          DestinationFolder="$(OutputPath)modules\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\LibreHardwareMonitorLib\LibreHardwareMonitorLib.csproj" />

@@ -55,7 +55,7 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             Debug.WriteLine($"LpcIO detected type=0x{_lpcDetectedType.Val:X}");
 
             Probe(_modLpcIo);
-            Probe(_modEc);
+            //Probe(_modEc);
             Probe(_modSmbus);
             Probe(_modMsr);
         }

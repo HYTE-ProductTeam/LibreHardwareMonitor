@@ -1,13 +1,4 @@
-﻿using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+﻿using System.Windows;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
 using pawnIO_test_app.Components;
@@ -26,11 +17,28 @@ namespace pawnIO_test_app
         public MainWindow()
         {
             InitializeComponent();
+
+            SideMenuComp.ButtonClicked += ChangeSelectPage;
+
             computer = _helper.Computer;
 
             PlotHardwareInfo();
 
             //StartUpdate();
+        }
+
+        private void ChangeSelectPage(MenuButton button)
+        {
+            if (button == MenuButton.Info)
+            {
+                InfoPanel.Visibility = Visibility.Visible;
+                FanPanel.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                InfoPanel.Visibility = Visibility.Collapsed;
+                FanPanel.Visibility = Visibility.Visible;
+            }
         }
 
         private void PlotHardwareInfo()
@@ -77,6 +85,12 @@ namespace pawnIO_test_app
                     Thread.Sleep(500);
                 }
             });
+        }
+
+        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            _helper.SetFanToDefault();
+            computer.Close();
         }
     }
 }
