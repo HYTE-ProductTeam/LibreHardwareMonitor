@@ -1,38 +1,40 @@
-﻿extern alias Pawn;
-using Pawn::LibreHardwareMonitor.Hardware;
+﻿extern alias Origin;
+using Origin::LibreHardwareMonitor.Hardware;
+using OriginalComputer = Origin::LibreHardwareMonitor.Hardware.Computer;
+
 namespace pawnIO_test_app.Controller
 {
-    public class UpdateVisitor : IVisitor
+    internal class LibreOriginHelper
     {
-        public void VisitComputer(IComputer computer)
+        public class UpdateVisitor : IVisitor
         {
-            computer.Traverse(this);
+            public void VisitComputer(IComputer computer)
+            {
+                computer.Traverse(this);
+            }
+            public void VisitHardware(IHardware hardware)
+            {
+                hardware.Update();
+                foreach (IHardware subHardware in hardware.SubHardware) subHardware.Accept(this);
+            }
+            public void VisitSensor(ISensor sensor) { }
+            public void VisitParameter(IParameter parameter) { }
         }
-        public void VisitHardware(IHardware hardware)
-        {
-            hardware.Update();
-            foreach (IHardware subHardware in hardware.SubHardware) subHardware.Accept(this);
-        }
-        public void VisitSensor(ISensor sensor) { }
-        public void VisitParameter(IParameter parameter) { }
-    }
 
-    public class LibrehardwareHelper
-    {
-        private static readonly Lazy<LibrehardwareHelper> _lazy = new(() => new LibrehardwareHelper());
-        public static LibrehardwareHelper Instance => _lazy.Value;
+        private static readonly Lazy<LibreOriginHelper> _lazy = new(() => new LibreOriginHelper());
+        public static LibreOriginHelper Instance => _lazy.Value;
 
         public Computer Computer => _computer;
 
         public Action DataUpdated { get; set; }
 
-        private readonly Computer _computer;
+        private readonly OriginalComputer _computer;
 
         private readonly UpdateVisitor _updateVisitor = new();
 
         private bool _startGetData = false;
 
-        private LibrehardwareHelper()
+        private LibreOriginHelper()
         {
             _computer = GetComputer();
             StartGetData();

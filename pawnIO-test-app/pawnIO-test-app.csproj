@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -10,7 +10,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\LibreHardwareMonitorLib\LibreHardwareMonitorLib.csproj" />
+    <ProjectReference Include="..\..\..\Test\LibreHardwareMonitor\LibreHardwareMonitorLib\LibreHardwareMonitorLib.csproj" Aliases="Origin" />
+    <ProjectReference Include="..\LibreHardwareMonitorLib\LibreHardwareMonitorLibPawn.csproj" Aliases="Pawn" />
   </ItemGroup>
+
+  <Target Name="CopyModules" AfterTargets="Build">
+    <ItemGroup>
+      <ModuleFiles Include="..\LibreHardwareMonitorLib\modules\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModuleFiles)"
+          DestinationFolder="$(OutputPath)modules\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
