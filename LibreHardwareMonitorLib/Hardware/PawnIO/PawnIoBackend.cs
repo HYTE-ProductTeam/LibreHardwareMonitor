@@ -28,14 +28,6 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                                             // （可選）AMD 更完整監控/控制
                 var ryzen = result.RyzenSmu;
 
-                // 看看偵測輸出
-                foreach (var line in result.Log) Console.WriteLine(line);
-
-                //_modMsr = new PawnIoModule(Path.Combine(modulesDir, "IntelMSR.bin"), "IntelMSR.bin");
-                //_modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
-                //_modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
-                //_modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusI801.bin"), "SmbusPIIX4.bin");
-
                 _modMsr = result.Msr;
                 _modLpcIo = result.LpcIo;
                 _modEc = result.Ec;
@@ -51,13 +43,6 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             _lpcDetectedType = DetectLpcIo(_modLpcIo.Handle, 0);
             if (_lpcDetectedType.Val == 0)
                 _lpcDetectedType = DetectLpcIo(_modLpcIo.Handle, 1);
-
-            Debug.WriteLine($"LpcIO detected type=0x{_lpcDetectedType.Val:X}");
-
-            Probe(_modLpcIo);
-            //Probe(_modEc);
-            Probe(_modSmbus);
-            Probe(_modMsr);
         }
 
         [StructLayout(LayoutKind.Sequential)] struct U32 { public uint Val; }
@@ -71,85 +56,6 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             _modEc?.Dispose();
             _modLpcIo?.Dispose();
             _modMsr?.Dispose();
-        }
-
-        void Probe(PawnIoModule mod)
-        {
-            try
-            {
-                switch (mod.Name.ToLowerInvariant())
-                {
-                    case "lpcio.bin":
-                        Debug.WriteLine("Probing LpcIO...");
-                        try
-                        {
-                            var t0 = DetectLpcIo(mod.Handle, 0);
-                            Debug.WriteLine($"LpcIO g_type(slot0)=0x{t0.Val:X}");
-
-                            if (t0.Val == 0) // 如果 slot0 沒有檢測到，試試 slot1
-                            {
-                                var t1 = DetectLpcIo(mod.Handle, 1);
-                                Debug.WriteLine($"LpcIO g_type(slot1)=0x{t1.Val:X}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"LpcIO detection failed: {ex.Message}");
-                        }
-                        break;
-
-                    case "amdfamily17.bin":
-                        Debug.WriteLine("Probing AMD MSR...");
-                        try
-                        {
-                            // 使用新的 ulong[] 格式讀取穩定 MSR（例如 0xCE）
-                            ulong msrValue = IoctlHelper.ReadMsr(mod.Handle, "ioctl_read_msr", 0xCE);
-                            Debug.WriteLine($"{mod.Name} MSR 0xCE=0x{msrValue:X} (OK)");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"MSR probe failed: {ex.Message}");
-                        }
-                        break;
-
-                    case "lpcacpiec.bin":
-                        Debug.WriteLine("Probing EC...");
-                        try
-                        {
-                            var input = new U32 { Val = 0 };
-                            var v = IoctlHelper.ExecStructToStruct<U32, U32>(mod.Handle, "ioctl_ec_read", input);
-                            Debug.WriteLine($"EC read test ok (val=0x{v.Val:X})");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"EC not supported or blocked: {ex.Message}");
-                        }
-                        break;
-
-                    case "smbuspiix4.bin":
-                        Debug.WriteLine("Probing SMBus...");
-                        try
-                        {
-                            // 範例：addr=0x2D, reg=0x00
-                            ulong[] input = { 0x2D, 0x00 };
-                            var rv = IoctlHelper.ExecOut<U32>(mod.Handle, "ioctl_smbus_read_byte", input);
-                            Debug.WriteLine($"SMBus probe ok (0x2D:0)=0x{rv.Val:X2}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"SMBus not supported on this platform: {ex.Message}");
-                        }
-                        break;
-
-                    default:
-                        Debug.WriteLine($"{mod.Name}: no probe defined, skip");
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Probe failed for {mod.Name}: {ex.Message}");
-            }
         }
 
         // 使用 IoctlHelper 重寫的檢測方法
@@ -241,18 +147,19 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         {
             try
             {
-                Debug.WriteLine($"Reading MSR 0x{msr:X} with correct ulong[] format");
+                //Debug.WriteLine($"Reading MSR 0x{msr:X} with correct ulong[] format");
 
                 // 嘗試不同的 ioctl 名稱和格式
-                var ioctlNames = new[] { "ioctl_read_msr", "msr_read", "read_msr" };
+                //var ioctlNames = new[] { "ioctl_read_msr", "msr_read", "read_msr" };
+                var ioctlNames = new[] { "ioctl_read_msr" };
 
                 foreach (var ioctlName in ioctlNames)
                 {
                     try
                     {
-                        Debug.WriteLine($"Trying IOCTL: {ioctlName}");
+                        //Debug.WriteLine($"Trying IOCTL: {ioctlName}");
                         ulong result = IoctlHelper.ReadMsr(_modMsr.Handle, ioctlName, msr);
-                        Debug.WriteLine($"Success with {ioctlName}: MSR 0x{msr:X} = 0x{result:X}");
+                        //Debug.WriteLine($"Success with {ioctlName}: MSR 0x{msr:X} = 0x{result:X}");
                         return result;
                     }
                     catch (Exception ex)
@@ -261,7 +168,7 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                     }
                 }
 
-                Debug.WriteLine("All IOCTL attempts failed");
+                //Debug.WriteLine("All IOCTL attempts failed");
                 return 0;
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == unchecked((int)0x80070032))
