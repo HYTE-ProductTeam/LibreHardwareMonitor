@@ -268,24 +268,24 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                 try
                 {
                     IoctlHelper.WriteMsr(_modMsr.Handle, name, msr, eax, edx);
-                    Debug.WriteLine($"MSR write OK via {name}: msr=0x{msr:X}, eax=0x{eax:X8}, edx=0x{edx:X8}");
+                    //Debug.WriteLine($"MSR write OK via {name}: msr=0x{msr:X}, eax=0x{eax:X8}, edx=0x{edx:X8}");
                     return true;
                 }
                 catch (Win32Exception ex) when (
                        ex.NativeErrorCode == unchecked((int)0x80070032)   // ERROR_NOT_SUPPORTED
                     || ex.NativeErrorCode == unchecked((int)0xC00000BB))  // STATUS_NOT_SUPPORTED
                 {
-                    Debug.WriteLine($"MSR 0x{msr:X} write not supported via {name}: 0x{ex.NativeErrorCode:X8}");
+                    //Debug.WriteLine($"MSR 0x{msr:X} write not supported via {name}: 0x{ex.NativeErrorCode:X8}");
                     // Try next ioctlName; if all fail, return false.
                 }
                 catch (Win32Exception ex) when (ex.NativeErrorCode == unchecked((int)0x80070005)) // E_ACCESSDENIED
                 {
-                    Debug.WriteLine("Access denied writing MSR. Run elevated or ensure PawnIO service/driver is installed.");
+                    //Debug.WriteLine("Access denied writing MSR. Run elevated or ensure PawnIO service/driver is installed.");
                     return false;
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"MSR write failed via {name}: {ex}");
+                    //Debug.WriteLine($"MSR write failed via {name}: {ex}");
                     // Try next name
                 }
             }
