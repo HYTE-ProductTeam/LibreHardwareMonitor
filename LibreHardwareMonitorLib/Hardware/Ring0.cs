@@ -5,6 +5,8 @@
 // All Rights Reserved.
 
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -60,18 +62,19 @@ public static class Ring0
 
     public static bool ReadMsr(uint index, out uint eax, out uint edx)
     {
-        if (IsOpen)
+        eax = edx = 0;
+        if (!IsOpen) return false;
+
+        try
         {
             ulong v = _pawnIO.ReadMsr(index);
-
-            eax = (uint)(v & 0xFFFFFFFFUL);
+            eax = (uint)v;
             edx = (uint)(v >> 32);
             return true;
         }
-        else
+        catch (Exception ex)
         {
-            eax = 0;
-            edx = 0;
+            Debug.WriteLine($"ReadMsr 0x{index:X} failed: {ex.Message}");
             return false;
         }
     }
@@ -135,34 +138,25 @@ public static class Ring0
 
     public static byte ReadIoPort(uint port)
     {
-        if (IsOpen)
+        if (!IsOpen) return 0xFF;
+        try { return _pawnIO.In8(checked((ushort)port)); }
+        catch (Win32Exception ex)
         {
-            try
-            {
-                return _pawnIO.In8((ushort)port);
-            }
-            catch
-            {
-                return 0xFF;
-            }
+            Debug.WriteLine($"ReadIoPort 0x{port:X}: 0x{ex.NativeErrorCode:X8}");
+            return 0xFF;
         }
-        return 0xFF;
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"ReadIoPort 0x{port:X} failed: {ex.Message}");
+            return 0xFF;
+        }
     }
 
     public static void WriteIoPort(uint port, byte value)
     {
-        if (IsOpen)
-        {
-            try
-            {
-                _pawnIO.Out8((ushort)port, value);
-            }
-            catch
-            {
-                // 這裡可以 log
-            }
-            return;
-        }
+        if (!IsOpen) return;
+        try { _pawnIO.Out8(checked((ushort)port), value); }
+        catch (Exception ex) { Debug.WriteLine($"WriteIoPort 0x{port:X} failed: {ex.Message}"); }
     }
 
     public static uint GetPciAddress(byte bus, byte device, byte function)
@@ -170,7 +164,20 @@ public static class Ring0
         return (uint)(((bus & 0xFF) << 8) | ((device & 0x1F) << 3) | (function & 7));
     }
 
-    public static bool ReadPciConfig(uint pciAddress, uint regAddress, out uint value)
+    private static readonly HashSet<FnKey> _absent = new();
+
+    //public static bool ReadPciConfig(uint pciAddress, uint regAddress, out uint value)
+    //{
+    //    if (!IsOpen || (regAddress & 3) != 0)
+    //    {
+    //        value = 0;
+    //        return false;
+    //    }
+
+    //    return _pawnIO.PciReadConfigDword(pciAddress, regAddress, out value);
+    //}
+
+    public static bool ReadPciConfigOrigin(uint pciAddress, uint regAddress, out uint value)
     {
         if (!IsOpen || (regAddress & 3) != 0)
         {
@@ -180,6 +187,8 @@ public static class Ring0
 
         return _pawnIO.PciReadConfigDword(pciAddress, regAddress, out value);
     }
+
+
 
     public static bool WritePciConfig(uint pciAddress, uint regAddress, uint value)
     {
@@ -239,4 +248,66 @@ public static class Ring0
         public uint UnitSize;
         public uint Count;
     }
+
+
+    public readonly struct FnKey : IEquatable<FnKey>
+    {
+        public readonly byte Bus, Dev, Fn;
+        public FnKey(byte bus, byte dev, byte fn) { Bus = bus; Dev = dev; Fn = fn; }
+        public bool Equals(FnKey o) => Bus == o.Bus && Dev == o.Dev && Fn == o.Fn;
+        public override bool Equals(object o) => o is FnKey k && Equals(k);
+        public override int GetHashCode() => (Bus << 16) | (Dev << 8) | Fn;
+    }
+    public readonly struct PciKey : IEquatable<PciKey>
+    {
+        public readonly uint Addr, Reg;
+        public PciKey(uint addr, uint reg) { Addr = addr; Reg = reg; }
+        public bool Equals(PciKey o) => Addr == o.Addr && Reg == o.Reg;
+        public override bool Equals(object o) => o is PciKey k && Equals(k);
+        public override int GetHashCode() => unchecked((int)(Addr * 397) ^ (int)Reg);
+    }
+
+    static readonly Dictionary<PciKey, (uint val, long stamp)> _pciCache = new();
+    const long PciTtlMs = 5_000; // you can raise this to 60_000+ for static regs
+
+    static bool TryEnsurePresent(uint addr)
+    {
+        var key = new FnKey((byte)(addr >> 8), (byte)((addr >> 3) & 0x1F), (byte)(addr & 7));
+        if (_absent.Contains(key)) return false;
+
+        if (!Ring0.ReadPciConfigOrigin(addr, 0x00, out var v) || ((v & 0xFFFF) == 0xFFFF)) { _absent.Add(key); return false; }
+        return true;
+    }
+
+    public static bool ReadPciConfig(uint addr, uint reg, out uint value)
+    {
+        value = 0;
+        if (!TryEnsurePresent(addr)) return false;
+
+        var key = new PciKey(addr, reg);
+        var now = Environment.TickCount;
+        if (_pciCache.TryGetValue(key, out var e) && (now - e.stamp) < PciTtlMs) { value = e.val; return true; }
+
+        var ok = ReadPciConfigOrigin(addr, reg, out value);
+        if (ok) _pciCache[key] = (value, now);
+        return ok;
+    }
+}
+
+public readonly struct FnKey : IEquatable<FnKey>
+{
+    public readonly byte Bus;
+    public readonly byte Dev;
+    public readonly byte Fn;
+
+    public FnKey(byte bus, byte dev, byte fn)
+    {
+        Bus = bus;
+        Dev = dev;
+        Fn = fn;
+    }
+
+    public bool Equals(FnKey other) => Bus == other.Bus && Dev == other.Dev && Fn == other.Fn;
+    public override bool Equals(object obj) => obj is FnKey other && Equals(other);
+    public override int GetHashCode() => (Bus << 16) | (Dev << 8) | Fn;
 }
