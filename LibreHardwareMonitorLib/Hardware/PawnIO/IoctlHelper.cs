@@ -201,5 +201,81 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             Buffer.BlockCopy(bytes, 0, result, 0, bytes.Length);
             return result;
         }
+
+        public static void WriteMsr(IntPtr handle, string ioctlName, uint msr, uint eax, uint edx)
+        {
+            ulong value = ((ulong)edx << 32) | eax;
+
+            // First try (msr, value)
+            try
+            {
+                ExecNoOut(handle, ioctlName, new ulong[] { msr, value });
+                return;
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == unchecked((int)0x80070057)) // E_INVALIDARG
+            {
+                // Fall through and try split form
+            }
+
+            // Fallback: (msr, eax, edx)
+            ExecNoOut(handle, ioctlName, new ulong[] { msr, eax, edx });
+        }
+
+        public static byte[] ExecOutRawBytes(
+            IntPtr h,
+            string ioctl,
+            ulong[] input = null,
+            int expectedBytes = 0)
+        {
+            if (expectedBytes < 0)
+                throw new ArgumentOutOfRangeException(nameof(expectedBytes));
+
+            // Allocate enough ulongs to cover expectedBytes (at least 1)
+            int outUlongCount = Math.Max(1, (expectedBytes + 7) / 8);
+            ulong[] outUlongs = new ulong[outUlongCount];
+
+            int rc = PawnIOLib.pawnio_execute(
+                h, ioctl,
+                input, (UIntPtr)(input?.Length ?? 0),
+                outUlongs, (UIntPtr)outUlongCount,
+                out var returnedCount);
+
+            if (rc != 0)
+                throw new Win32Exception(rc);
+
+            // Driver tells us how many ulongs came back
+            ulong ulongsReturned = returnedCount.ToUInt64();
+            int bytesReturned = checked((int)Math.Min((ulong)int.MaxValue, ulongsReturned * 8UL));
+
+            // If caller passed expectedBytes>0, trim to that; else return all we got
+            int copyBytes = expectedBytes > 0 ? Math.Min(expectedBytes, bytesReturned) : bytesReturned;
+
+            var result = new byte[copyBytes];
+            if (copyBytes > 0)
+                Buffer.BlockCopy(outUlongs, 0, result, 0, copyBytes);
+
+            return result;
+        }
+
+        // Optional: strict version that guarantees exact length (throws if short)
+        public static byte[] ExecOutBytesExact(
+            IntPtr h,
+            string ioctl,
+            ulong[] input,
+            int expectedBytes)
+        {
+            if (expectedBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(expectedBytes));
+
+            var bytes = ExecOutRawBytes(h, ioctl, input, expectedBytes);
+
+            if (bytes.Length < expectedBytes)
+                throw new InvalidDataException($"Only {bytes.Length} bytes returned; expected {expectedBytes}.");
+
+            if (bytes.Length > expectedBytes)
+                Array.Resize(ref bytes, expectedBytes);
+
+            return bytes;
+        }
     }
 }

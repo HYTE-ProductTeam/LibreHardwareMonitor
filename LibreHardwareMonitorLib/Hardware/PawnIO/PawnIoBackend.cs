@@ -347,5 +347,201 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             ulong[] input = { addr, reg, val };
             IoctlHelper.ExecNoOut(_modSmbus.Handle, "ioctl_smbus_write_byte", input);
         }
+
+        public bool WriteMsr(uint msr, uint eax, uint edx)
+        {
+            if (_modMsr == null || _modMsr.Handle == IntPtr.Zero)
+                return false;
+
+            // PawnIO builds can use different IOCTL symbol names; try a few
+            var ioctlNames = new[] { "ioctl_write_msr", "msr_write", "write_msr" };
+
+            foreach (var name in ioctlNames)
+            {
+                try
+                {
+                    IoctlHelper.WriteMsr(_modMsr.Handle, name, msr, eax, edx);
+                    Debug.WriteLine($"MSR write OK via {name}: msr=0x{msr:X}, eax=0x{eax:X8}, edx=0x{edx:X8}");
+                    return true;
+                }
+                catch (Win32Exception ex) when (
+                       ex.NativeErrorCode == unchecked((int)0x80070032)   // ERROR_NOT_SUPPORTED
+                    || ex.NativeErrorCode == unchecked((int)0xC00000BB))  // STATUS_NOT_SUPPORTED
+                {
+                    Debug.WriteLine($"MSR 0x{msr:X} write not supported via {name}: 0x{ex.NativeErrorCode:X8}");
+                    // Try next ioctlName; if all fail, return false.
+                }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == unchecked((int)0x80070005)) // E_ACCESSDENIED
+                {
+                    Debug.WriteLine("Access denied writing MSR. Run elevated or ensure PawnIO service/driver is installed.");
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"MSR write failed via {name}: {ex}");
+                    // Try next name
+                }
+            }
+
+            return false;
+        }
+
+        public bool PciReadConfigDword(uint pciAddress, uint regAddress, out uint value)
+        {
+            value = 0;
+            if (_modMsr == null || _modMsr.Handle == IntPtr.Zero) // or whichever module exports PCI
+                return false;
+
+            // Guard for DWORD alignment (to mirror your old behavior)
+            if ((regAddress & 3u) != 0)
+                return false;
+
+            // Common IOCTL names & shapes seen in PawnIO builds
+            var ioctlNames = new[] { "ioctl_pci_read_config", "pci_read_cfg", "read_pci_cfg" };
+
+            foreach (var name in ioctlNames)
+            {
+                try
+                {
+                    // Try (addr, reg, width)
+                    // width=4 for DWORD
+                    ulong[] args = { pciAddress, regAddress, 4 };
+                    var rv = IoctlHelper.ExecOut<U32>(_modMsr.Handle, name, args);
+                    value = rv.Val;
+                    return true;
+                }
+                catch { /* try next shape/name */ }
+
+                try
+                {
+                    // Try (addr, reg) -> returns DWORD
+                    ulong[] args = { pciAddress, regAddress };
+                    var rv = IoctlHelper.ExecOut<U32>(_modMsr.Handle, name, args);
+                    value = rv.Val;
+                    return true;
+                }
+                catch { /* next */ }
+            }
+
+            return false;
+        }
+
+        public bool PciWriteConfigDword(uint pciAddress, uint regAddress, uint value)
+        {
+            if (_modMsr == null || _modMsr.Handle == IntPtr.Zero) // or your PCI-capable module
+                return false;
+
+            if ((regAddress & 3u) != 0)
+                return false;
+
+            var ioctlNames = new[] { "ioctl_pci_write_config", "pci_write_cfg", "write_pci_cfg" };
+
+            foreach (var name in ioctlNames)
+            {
+                try
+                {
+                    // Try (addr, reg, width, value)
+                    ulong[] args = { pciAddress, regAddress, 4, value };
+                    IoctlHelper.ExecNoOut(_modMsr.Handle, name, args);
+                    return true;
+                }
+                catch { /* next */ }
+
+                try
+                {
+                    // Try (addr, reg, value)
+                    ulong[] args = { pciAddress, regAddress, value };
+                    IoctlHelper.ExecNoOut(_modMsr.Handle, name, args);
+                    return true;
+                }
+                catch { /* next */ }
+            }
+
+            return false;
+        }
+
+        public bool ReadPhysicalMemory<T>(ulong address, ref T buffer) where T : struct
+        {
+            if (_modMsr == null || _modMsr.Handle == IntPtr.Zero)
+                return false;
+
+            int size = Marshal.SizeOf<T>();
+            var ioctlNames = new[] { "ioctl_mem_read", "mem_read", "read_mem", "phys_read" };
+
+            foreach (var name in ioctlNames)
+            {
+                try
+                {
+                    // Shape A: (address, unitSize=1, count=byteCount)
+                    var a = new ulong[] { address, 1, (uint)size };
+                    var bytes = IoctlHelper.ExecOutRawBytes(_modMsr.Handle, name, a, size);
+                    if (bytes.Length == size)
+                    {
+                        buffer = IoctlHelper.BytesToStruct<T>(bytes);
+                        return true;
+                    }
+                }
+                catch { /* try next */ }
+
+                try
+                {
+                    // Shape B: (address, totalBytes)
+                    var b = new ulong[] { address, (uint)size };
+                    var bytes = IoctlHelper.ExecOutRawBytes(_modMsr.Handle, name, b, size);
+                    if (bytes.Length == size)
+                    {
+                        buffer = IoctlHelper.BytesToStruct<T>(bytes);
+                        return true;
+                    }
+                }
+                catch { /* next */ }
+            }
+
+            return false;
+        }
+
+        public bool ReadPhysicalMemory<T>(ulong address, ref T[] buffer) where T : struct
+        {
+            if (_modMsr == null || _modMsr.Handle == IntPtr.Zero)
+                return false;
+
+            int elem = Marshal.SizeOf(typeof(T));
+            int total = elem * buffer.Length;
+            var ioctlNames = new[] { "ioctl_mem_read", "mem_read", "read_mem", "phys_read" };
+
+            foreach (var name in ioctlNames)
+            {
+                try
+                {
+                    // Shape A
+                    var a = new ulong[] { address, (uint)elem, (uint)buffer.Length };
+                    var bytes = IoctlHelper.ExecOutRawBytes(_modMsr.Handle, name, a, total);
+                    if (bytes.Length == total) { BytesToArray(bytes, ref buffer, elem); return true; }
+                }
+                catch { /* next */ }
+
+                try
+                {
+                    // Shape B
+                    var b = new ulong[] { address, (uint)total };
+                    var bytes = IoctlHelper.ExecOutRawBytes(_modMsr.Handle, name, b, total);
+                    if (bytes.Length == total) { BytesToArray(bytes, ref buffer, elem); return true; }
+                }
+                catch { /* next */ }
+            }
+
+            return false;
+        }
+
+        // unchanged helper
+        private static void BytesToArray<T>(byte[] data, ref T[] dst, int elemSize) where T : struct
+        {
+            if (data.Length < elemSize * dst.Length)
+                throw new ArgumentException("Insufficient data length");
+
+            var handle = GCHandle.Alloc(dst, GCHandleType.Pinned);
+            try { Marshal.Copy(data, 0, handle.AddrOfPinnedObject(), elemSize * dst.Length); }
+            finally { handle.Free(); }
+        }
     }
 }
