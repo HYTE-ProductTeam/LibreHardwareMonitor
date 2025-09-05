@@ -66,12 +66,12 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                 var input = new U32 { Val = slot };
                 var result = IoctlHelper.ExecStructToStruct<U32, U32>(h, "ioctl_detect", input);
 
-                Debug.WriteLine($"ioctl_detect(slot={slot}) successful, result=0x{result.Val:X8}");
+                //Debug.WriteLine($"ioctl_detect(slot={slot}) successful, result=0x{result.Val:X8}");
                 return result;
             }
             catch (Win32Exception ex)
             {
-                Debug.WriteLine($"ioctl_detect(slot={slot}) failed with rc=0x{ex.NativeErrorCode:X8}");
+                //Debug.WriteLine($"ioctl_detect(slot={slot}) failed with rc=0x{ex.NativeErrorCode:X8}");
 
                 // 常見的錯誤碼處理
                 switch (ex.NativeErrorCode)

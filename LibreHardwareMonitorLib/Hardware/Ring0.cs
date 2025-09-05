@@ -85,12 +85,12 @@ public static class Ring0
             try
             {
                 edxeax = _pawnIO.ReadMsr(index);
-                Debug.WriteLine($"MSR 0x{index:X} = 0x{edxeax:X16}");
+                //Debug.WriteLine($"MSR 0x{index:X} = 0x{edxeax:X16}");
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"MSR 0x{index:X} failed: {ex.Message}");
+                //Debug.WriteLine($"MSR 0x{index:X} failed: {ex.Message}");
                 return false;
             }
         }
