@@ -25,7 +25,7 @@ public static class Ring0
 
     public static void Open()
     {
-        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "modules");
+        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "modules");
         _pawnIO = new PawnIoBackend(modulesDir);
         if (Directory.Exists(modulesDir) && _pawnIO != null)
         {
