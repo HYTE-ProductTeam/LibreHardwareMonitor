@@ -695,48 +695,22 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         public bool SmuTryReadPmTableHead(int qwordCount, out ulong[] data, bool forceRefresh = false)
         {
             data = Array.Empty<ulong>();
-            if (!_smu.Available) return false;
-            if (qwordCount <= 0) return false;
-            qwordCount = Math.Min(qwordCount, PM_TABLE_QWORDS_MAX);
+            if (!_smu.Available || _modRyzenSmu?.Handle == IntPtr.Zero) return false;
 
-            lock (_smuLock)
+            try
             {
-                int now = Environment.TickCount;
+                if (forceRefresh) TryRefreshPmTable();
 
-                bool hit =
-                    !forceRefresh &&
-                    _pmHeadCache.Length >= qwordCount &&
-                    _pmHeadCacheCount >= qwordCount &&
-                    _pmHeadStampMs >= 0 &&
-                    (now - _pmHeadStampMs) <= PM_TABLE_TTL_MS;
+                int n = Math.Max(1, Math.Min(qwordCount, 512)); // driver limit
+                var bytes = IoctlHelper.ExecOutRawBytes(_modRyzenSmu.Handle, "ioctl_read_pm_table", null, n * 8);
 
-                if (!hit)
-                {
-                    try
-                    {
-                        using var _ = AcquireNamedMutex(@"Global\Access_PCI");
-                        // 先可選更新一次，確保新鮮（不想每次都更就拿掉這行）
-                        // IoctlHelper.ExecNoOut(_modRyzenSmu.Handle, "ioctl_update_pm_table", null);
-
-                        var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_read_pm_table", null, expectedOutputCount: qwordCount);
-                        // 正常情況 arr.Length == qwordCount；若較少，照實回
-                        _pmHeadCache = arr;
-                        _pmHeadCacheCount = arr.Length;
-                        _pmHeadStampMs = now;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"RyzenSMU read_pm_table failed: {ex.Message}");
-                        return false;
-                    }
-                }
-
-                // 回傳前 qwordCount 筆（不夠時照 cache 的長度回）
-                int n = Math.Min(qwordCount, _pmHeadCacheCount);
-                data = new ulong[n];
-                Array.Copy(_pmHeadCache, 0, data, 0, n);
-                return n > 0;
+                if (bytes.Length < 8) return false;
+                int got = bytes.Length / 8;
+                data = new ulong[got];
+                Buffer.BlockCopy(bytes, 0, data, 0, got * 8);
+                return true;
             }
+            catch { return false; }
         }
 
         /// <summary>讀單一 qword 欄位（從頭部快取取值）。</summary>
