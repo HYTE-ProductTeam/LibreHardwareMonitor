@@ -653,35 +653,35 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         }
 
         /// <summary>解析 PM Table（版本與基址），同 ioctl_resolve_pm_table。</summary>
-        public bool SmuTryResolvePmTable(out ulong pmVersion, out ulong pmBase)
-        {
-            pmVersion = 0; pmBase = 0;
-            if (_modRyzenSmu == null || _modRyzenSmu.Handle == IntPtr.Zero) return false;
+        //public bool SmuTryResolvePmTable(out ulong pmVersion, out ulong pmBase)
+        //{
+        //    pmVersion = 0; pmBase = 0;
+        //    if (_modRyzenSmu == null || _modRyzenSmu.Handle == IntPtr.Zero) return false;
 
-            lock (_smuLock)
-            {
-                try
-                {
-                    // 依模組註解，建議取得 "\BaseNamedObjects\Access_PCI"；使用者態用 Global\
-                    using var _ = AcquireNamedMutex(@"Global\Access_PCI");
-                    var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_resolve_pm_table", null, expectedOutputCount: 2);
-                    pmVersion = arr[0];
-                    pmBase = arr[1];
-                    _smu.PmTableBase = pmBase;
-                    _smu.Available = pmBase != 0;
-                    // 重置快取
-                    _pmHeadCache = Array.Empty<ulong>();
-                    _pmHeadCacheCount = 0;
-                    _pmHeadStampMs = -1;
-                    return _smu.Available;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"RyzenSMU resolve_pm_table failed: {ex.Message}");
-                    return false;
-                }
-            }
-        }
+        //    lock (_smuLock)
+        //    {
+        //        try
+        //        {
+        //            // 依模組註解，建議取得 "\BaseNamedObjects\Access_PCI"；使用者態用 Global\
+        //            using var _ = AcquireNamedMutex(@"Global\Access_PCI");
+        //            var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_resolve_pm_table", null, expectedOutputCount: 2);
+        //            pmVersion = arr[0];
+        //            pmBase = arr[1];
+        //            _smu.PmTableBase = pmBase;
+        //            _smu.Available = pmBase != 0;
+        //            // 重置快取
+        //            _pmHeadCache = Array.Empty<ulong>();
+        //            _pmHeadCacheCount = 0;
+        //            _pmHeadStampMs = -1;
+        //            return _smu.Available;
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            Debug.WriteLine($"RyzenSMU resolve_pm_table failed: {ex.Message}");
+        //            return false;
+        //        }
+        //    }
+        //}
 
         /// <summary>請求 SMU 搬運/更新 PM Table 到 DRAM。</summary>
         public bool SmuTryUpdatePmTable()
@@ -747,6 +747,23 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             if (!SmuTryReadPmTableHead(index + 1, out var head, forceRefresh)) return false;
             value = head[index];
             return true;
+        }
+
+        public bool SmuResolvePmTable(out uint pmVersion, out ulong pmBase)
+        {
+            pmVersion = 0; pmBase = 0;
+            if (_modRyzenSmu == null || _modRyzenSmu.Handle == IntPtr.Zero) return false;
+
+            try
+            {
+                // returns [version, base] as ulongs
+                var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_resolve_pm_table", null, expectedOutputCount: 2);
+                pmVersion = (uint)arr[0];
+                pmBase = arr[1];
+                _smu.PmTableBase = pmBase;
+                return pmBase != 0;
+            }
+            catch { return false; }
         }
     }
 }

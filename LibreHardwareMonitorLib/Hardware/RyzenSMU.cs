@@ -159,53 +159,28 @@ internal class RyzenSMU
 
     public RyzenSMU(uint family, uint model, uint packageType)
     {
-        _cpuCodeName = GetCpuCodeName(family, model, packageType);
+        //_cpuCodeName = GetCpuCodeName(family, model, packageType);
 
-        _supportedCPU = Environment.Is64BitOperatingSystem == Environment.Is64BitProcess && SetAddresses(_cpuCodeName);
+        //_supportedCPU = Environment.Is64BitOperatingSystem == Environment.Is64BitProcess && SetAddresses(_cpuCodeName);
 
-        if (_supportedCPU && InpOut.Open())
-            SetupPmTableAddrAndSize();
-    }
+        //if (_supportedCPU && InpOut.Open())
+        //    SetupPmTableAddrAndSize();
 
-    private static CpuCodeName GetCpuCodeName(uint family, uint model, uint packageType)
-    {
-        return family switch
+        if (Ring0.SmuResolvePmTable(out var ver, out var baseAddr))
         {
-            0x17 => model switch
-            {
-                0x01 => packageType == 7 ? CpuCodeName.Threadripper : CpuCodeName.SummitRidge,
-                0x08 => packageType == 7 ? CpuCodeName.Colfax : CpuCodeName.PinnacleRidge,
-                0x11 => CpuCodeName.RavenRidge,
-                0x18 => packageType == 2 ? CpuCodeName.RavenRidge2 : CpuCodeName.Picasso,
-                0x20 => CpuCodeName.Dali,
-                0x31 => CpuCodeName.CastlePeak,
-                0x60 => CpuCodeName.Renoir,
-                0x71 => CpuCodeName.Matisse,
-                0x90 => CpuCodeName.Vangogh,
-                _ => CpuCodeName.Undefined
-            },
-            0x19 => model switch
-            {
-                0x00 => CpuCodeName.Milan,
-                0x20 or 0x21 => CpuCodeName.Vermeer,
-                0x40 => CpuCodeName.Rembrandt,
-                0x50 => CpuCodeName.Cezanne,
-                0x61 => CpuCodeName.Raphael,
-                _ => CpuCodeName.Undefined
-            },
-            0x1A => model switch
-            {
-                0x44 => CpuCodeName.GraniteRidge,
-                _ => CpuCodeName.Undefined
-            },
-            _ => CpuCodeName.Undefined
-        };
+            _pmTableVersion = ver;
+            _supportedCPU = Ring0.SmuIsAvailable && baseAddr != 0;
+        }
+        else
+        {
+            _pmTableVersion = 0;
+            _supportedCPU = false;
+        }
     }
 
     public string GetReport()
     {
-        StringBuilder r = new();
-
+        var r = new StringBuilder();
         r.AppendLine("Ryzen SMU");
         r.AppendLine();
         r.AppendLine($" PM table version: 0x{_pmTableVersion:X8}");
@@ -214,21 +189,53 @@ internal class RyzenSMU
 
         if (_supportedCPU)
         {
-            r.AppendLine($" PM table size: 0x{_pmTableSize:X3}");
-            r.AppendLine($" PM table start address: 0x{_dramBaseAddr:X8}");
-            r.AppendLine();
-            r.AppendLine(" PM table dump:");
-            r.AppendLine("  Idx    Offset   Value");
-            r.AppendLine(" ------------------------");
-
-            float[] pm_values = GetPmTable();
-            for (int i = 0; i < pm_values.Length; i++)
+            if (Ring0.SmuReadPmTableHead(512, out var raw, forceRefresh: true))
             {
-                r.AppendLine($" {i,4}    0x{i * 4:X3}    {pm_values[i]}");
+                r.AppendLine();
+                r.AppendLine(" PM table dump (first 512 qwords):");
+                for (int i = 0; i < raw.Length; i++)
+                    r.AppendLine($" {i,4}: 0x{raw[i]:X16}");
             }
         }
-
         return r.ToString();
+    }
+
+    public bool IsPmTableLayoutDefined() => _supportedPmTableVersions.ContainsKey(_pmTableVersion);
+
+    public Dictionary<uint, SmuSensorType> GetPmTableStructure()
+        => IsPmTableLayoutDefined() ? _supportedPmTableVersions[_pmTableVersion]
+                                    : new Dictionary<uint, SmuSensorType>();
+
+    public float[] GetPmTable()
+    {
+        if (!_supportedCPU) return Array.Empty<float>();
+        if (!Ring0.SmuReadPmTableHead(512, out var raw, forceRefresh: false))
+            return Array.Empty<float>();
+
+        var arr = new float[raw.Length];
+        for (int i = 0; i < raw.Length; i++)
+            arr[i] = LowDwordToFloat(raw[i]);   // decode low 32-bit as float
+
+        return arr;
+    }
+
+    private static float LowDwordToFloat(ulong q)
+    {
+        uint lo = (uint)(q & 0xFFFFFFFF);
+
+    #if NET5_0_OR_GREATER
+        return BitConverter.UInt32BitsToSingle(lo);
+    #else
+            // compatible with .NET Framework / older targets
+            return BitConverter.ToSingle(BitConverter.GetBytes(lo), 0);
+    #endif
+    }
+
+    public struct SmuSensorType
+    {
+        public string Name;
+        public SensorType Type;
+        public float Scale;
     }
 
     private bool SetAddresses(CpuCodeName codeName)
@@ -274,37 +281,6 @@ internal class RyzenSMU
         uint[] args = [1];
 
         return SendCommand(0x02, ref args) ? args[0] : 0;
-    }
-
-    public Dictionary<uint, SmuSensorType> GetPmTableStructure()
-    {
-        if (!IsPmTableLayoutDefined())
-            return new Dictionary<uint, SmuSensorType>();
-
-        return _supportedPmTableVersions[_pmTableVersion];
-    }
-
-    public bool IsPmTableLayoutDefined()
-    {
-        return _supportedPmTableVersions.ContainsKey(_pmTableVersion);
-    }
-
-    public float[] GetPmTable()
-    {
-        if (!_supportedCPU || !TransferTableToDram())
-            return [0];
-
-        float[] table = ReadDramToArray();
-
-        // Fix for Zen+ empty values on first call.
-        if (table.Length == 0 || table[0] == 0)
-        {
-            Thread.Sleep(10);
-            TransferTableToDram();
-            table = ReadDramToArray();
-        }
-
-        return table;
     }
 
     private float[] ReadDramToArray()
@@ -736,12 +712,12 @@ internal class RyzenSMU
         return read;
     }
 
-    public struct SmuSensorType
-    {
-        public string Name;
-        public SensorType Type;
-        public float Scale;
-    }
+    //public struct SmuSensorType
+    //{
+    //    public string Name;
+    //    public SensorType Type;
+    //    public float Scale;
+    //}
 
     private enum Status : uint
     {

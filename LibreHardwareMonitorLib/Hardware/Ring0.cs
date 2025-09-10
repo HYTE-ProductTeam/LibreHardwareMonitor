@@ -310,10 +310,10 @@ public static class Ring0
         return _pawnIO.SmuTryGetCodeName(out codeName);
     }
 
-    public static bool SmuResolvePmTable(out ulong pmVersion, out ulong pmBase)
+    public static bool SmuResolvePmTable(out uint pmVersion, out ulong pmBase)
     {
         pmVersion = 0; pmBase = 0; if (!IsOpen) return false;
-        return _pawnIO.SmuTryResolvePmTable(out pmVersion, out pmBase);
+        return _pawnIO.SmuResolvePmTable(out pmVersion, out pmBase);
     }
 
     public static bool SmuUpdatePmTable()
