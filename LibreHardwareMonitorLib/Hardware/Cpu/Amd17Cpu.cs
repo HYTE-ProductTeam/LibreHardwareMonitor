@@ -1,4 +1,4 @@
-// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+﻿// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 // If a copy of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 // Copyright (C) LibreHardwareMonitor and Contributors.
 // All Rights Reserved.
@@ -172,26 +172,70 @@ internal sealed class Amd17Cpu : AmdCpu
 
             uint totalEnergy = eax;
 
+            bool gotTempFromSmu = false;
+            bool gotPkgFromSmu = false;
+
+            float[] smuData = _cpu._smu.GetPmTable();
+            if (smuData != null && smuData.Length > 0)
+            {
+                // ---- Tdie ----
+                var tdieKvp = _cpu._smu.GetPmTableStructure()
+                    .FirstOrDefault(kv =>
+                        kv.Value.Type == SensorType.Temperature &&
+                        !string.IsNullOrEmpty(kv.Value.Name) &&
+                        (kv.Value.Name.Contains("Tdie") ||
+                         kv.Value.Name.Contains("Tctl/Tdie")));
+
+                if (!string.IsNullOrEmpty(tdieKvp.Value.Name) && tdieKvp.Key < smuData.Length)
+                {
+                    float t = smuData[tdieKvp.Key] * tdieKvp.Value.Scale;
+                    _coreTemperatureTdie.Value = t;
+                    _cpu.ActivateSensor(_coreTemperatureTdie);
+
+                    _coreTemperatureTctlTdie.Value = t;
+                    _cpu.ActivateSensor(_coreTemperatureTctlTdie);
+
+                    gotTempFromSmu = true;
+                }
+
+                // ---- Package Power ----
+                var pkgKvp = _cpu._smu.GetPmTableStructure()
+                    .Where(kv => kv.Value.Type == SensorType.Power && !string.IsNullOrEmpty(kv.Value.Name))
+                    .OrderByDescending(kv =>
+                        (kv.Value.Name.Contains("Package") ? 3 : 0) +
+                        (kv.Value.Name.Contains("Socket") ? 2 : 0) +
+                        (kv.Value.Name.Contains("CPU") ? 1 : 0))
+                    .FirstOrDefault();
+
+                if (!string.IsNullOrEmpty(pkgKvp.Value.Name) && pkgKvp.Key < smuData.Length)
+                {
+                    float w = smuData[pkgKvp.Key] * pkgKvp.Value.Scale;
+                    _packagePower.Value = w;
+                    _cpu.ActivateSensor(_packagePower);
+                    gotPkgFromSmu = true;
+                }
+            }
+
             uint smuSvi0Tfn = 0;
             uint smuSvi0TelPlane0 = 0;
             uint smuSvi0TelPlane1 = 0;
 
             if (Mutexes.WaitPciBus(10))
             {
-                // THM_TCON_CUR_TMP
-                // CUR_TEMP [31:21]
-                Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, F17H_M01H_THM_TCON_CUR_TMP);
-                Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out uint temperature);
+                // 只有當 SMU 沒給溫度時，才用 THM 讀 Tctl/Tdie
+                uint temperature = 0;
+                if (!gotTempFromSmu)
+                {
+                    // THM_TCON_CUR_TMP: CUR_TEMP [31:21]
+                    Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, F17H_M01H_THM_TCON_CUR_TMP);
+                    Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out temperature);
+                }
 
-                // SVI0_TFN_PLANE0 [0]
-                // SVI0_TFN_PLANE1 [1]
+                // 依然讀 SVI（電壓要用），不管溫度來源
                 Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, F17H_M01H_SVI + 0x8);
                 Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out smuSvi0Tfn);
 
                 bool supportsPerCcdTemperatures = false;
-
-                // TODO: find a better way because these will probably keep changing in the future.
-
                 uint sviPlane0Offset;
                 uint sviPlane1Offset;
                 switch (cpuId.Model)
@@ -209,8 +253,8 @@ internal sealed class Amd17Cpu : AmdCpu
                         supportsPerCcdTemperatures = true;
                         break;
 
-                    case 0x61: //Zen 4
-                    case 0x44: //Zen 5
+                    case 0x61: // Zen 4
+                    case 0x44: // Zen 5
                         sviPlane0Offset = F17H_M01H_SVI + 0x10;
                         sviPlane1Offset = F17H_M01H_SVI + 0xC;
                         supportsPerCcdTemperatures = true;
@@ -222,18 +266,16 @@ internal sealed class Amd17Cpu : AmdCpu
                         break;
                 }
 
-                // SVI0_PLANE0_VDDCOR [24:16]
-                // SVI0_PLANE0_IDDCOR [7:0]
+                // SVI TEL
                 Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, sviPlane0Offset);
                 Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane0);
 
-                // SVI0_PLANE1_VDDCOR [24:16]
-                // SVI0_PLANE1_IDDCOR [7:0]
                 Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, sviPlane1Offset);
                 Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane1);
 
                 ThreadAffinity.Set(previousAffinity);
 
+                // === 封裝功耗（MSR 能量累積）—只有在沒拿到 SMU 值時才用 ===
                 TimeSpan deltaTime = sampleTime - _lastSampleTime;
                 if (_lastSampleTime.Ticks == 0)
                 {
@@ -241,13 +283,7 @@ internal sealed class Amd17Cpu : AmdCpu
                     _lastSampleTime = sampleTime;
                     _lastPwrValue = totalEnergy;
                 }
-                
                 _lastSampleTime = sampleTime;
-
-                // ticks diff
-                // power consumption
-                // power.Value = (float) ((double)pu * 0.125);
-                // energyBaseUnit = micro Joule per increment, from [ESU]
 
                 long pwr;
                 if (_lastPwrValue <= totalEnergy)
@@ -255,55 +291,56 @@ internal sealed class Amd17Cpu : AmdCpu
                 else
                     pwr = (0xffffffff - _lastPwrValue) + totalEnergy;
 
-                // update for next sample
                 _lastPwrValue = totalEnergy;
 
-                if (deltaTime.Ticks > 0)
+                if (!gotPkgFromSmu && deltaTime.Ticks > 0)
                 {
-                    double energy = energyBaseUnit * pwr;
+                    double energy = energyBaseUnit * pwr; // microJ/increment 轉為 J/s
                     energy /= deltaTime.TotalSeconds;
 
                     if (!double.IsNaN(energy))
+                    {
                         _packagePower.Value = (float)energy;
+                        _cpu.ActivateSensor(_packagePower);
+                    }
                 }
 
-                // current temp Bit [31:21]
-                // If bit 19 of the Temperature Control register is set, there is an additional offset of 49 degrees C.
-                bool tempOffsetFlag = (temperature & F17H_TEMP_OFFSET_FLAG) != 0;
-                temperature = (temperature >> 21) * 125;
-
-                float offset = 0.0f;
-
-                // Offset table: https://github.com/torvalds/linux/blob/master/drivers/hwmon/k10temp.c#L78
-                if (string.IsNullOrWhiteSpace(cpuId.Name))
-                    offset = 0;
-                else if (cpuId.Name.Contains("1600X") || cpuId.Name.Contains("1700X") || cpuId.Name.Contains("1800X"))
-                    offset = -20.0f;
-                else if (cpuId.Name.Contains("Threadripper 19") || cpuId.Name.Contains("Threadripper 29"))
-                    offset = -27.0f;
-                else if (cpuId.Name.Contains("2700X"))
-                    offset = -10.0f;
-
-                float t = temperature * 0.001f;
-                if (tempOffsetFlag)
-                    t += -49.0f;
-
-                if (offset < 0)
+                // === 溫度（PCI THM 路徑）—只有在沒拿到 SMU 值時才用 ===
+                if (!gotTempFromSmu)
                 {
-                    _coreTemperatureTctl.Value = t;
-                    _coreTemperatureTdie.Value = t + offset;
+                    bool tempOffsetFlag = (temperature & F17H_TEMP_OFFSET_FLAG) != 0;
+                    temperature = (temperature >> 21) * 125;
 
-                    _cpu.ActivateSensor(_coreTemperatureTctl);
-                    _cpu.ActivateSensor(_coreTemperatureTdie);
-                }
-                else
-                {
-                    // Zen 2 doesn't have an offset so Tdie and Tctl are the same.
-                    _coreTemperatureTctlTdie.Value = t;
-                    _cpu.ActivateSensor(_coreTemperatureTctlTdie);
+                    float offset = 0.0f;
+                    if (string.IsNullOrWhiteSpace(cpuId.Name))
+                        offset = 0;
+                    else if (cpuId.Name.Contains("1600X") || cpuId.Name.Contains("1700X") || cpuId.Name.Contains("1800X"))
+                        offset = -20.0f;
+                    else if (cpuId.Name.Contains("Threadripper 19") || cpuId.Name.Contains("Threadripper 29"))
+                        offset = -27.0f;
+                    else if (cpuId.Name.Contains("2700X"))
+                        offset = -10.0f;
+
+                    float t = temperature * 0.001f;
+                    if (tempOffsetFlag)
+                        t += -49.0f;
+
+                    if (offset < 0)
+                    {
+                        _coreTemperatureTctl.Value = t;
+                        _coreTemperatureTdie.Value = t + offset;
+
+                        _cpu.ActivateSensor(_coreTemperatureTctl);
+                        _cpu.ActivateSensor(_coreTemperatureTdie);
+                    }
+                    else
+                    {
+                        _coreTemperatureTctlTdie.Value = t;
+                        _cpu.ActivateSensor(_coreTemperatureTctlTdie);
+                    }
                 }
 
-                // Tested only on R5 3600 & Threadripper 3960X, 5900X, 7900X
+                // CCD 溫度（仍走 PCI，SMU 有也可共存；此邏輯保留）
                 if (supportsPerCcdTemperatures)
                 {
                     for (uint i = 0; i < _ccdTemperatures.Length; i++)
@@ -312,11 +349,12 @@ internal sealed class Amd17Cpu : AmdCpu
                             Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, F17H_M61H_CCD1_TEMP + (i * 0x4));
                         else
                             Ring0.WritePciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER, F17H_M70H_CCD1_TEMP + (i * 0x4));
+
                         Ring0.ReadPciConfig(0x00, FAMILY_17H_PCI_CONTROL_REGISTER + 4, out uint ccdRawTemp);
 
                         ccdRawTemp &= 0xFFF;
                         float ccdTemp = ((ccdRawTemp * 125) - 305000) * 0.001f;
-                        if (ccdRawTemp > 0 && ccdTemp < 125) // Zen 2 reports 95 degrees C max, but it might exceed that.
+                        if (ccdRawTemp > 0 && ccdTemp < 125)
                         {
                             if (_ccdTemperatures[i] == null)
                             {
@@ -326,7 +364,6 @@ internal sealed class Amd17Cpu : AmdCpu
                                                                                      _cpu,
                                                                                      _cpu._settings));
                             }
-
                             _ccdTemperatures[i].Value = ccdTemp;
                         }
                     }
@@ -334,8 +371,6 @@ internal sealed class Amd17Cpu : AmdCpu
                     Sensor[] activeCcds = _ccdTemperatures.Where(x => x != null).ToArray();
                     if (activeCcds.Length > 1)
                     {
-                        // No need to get the max / average ccds temp if there is only one CCD.
-
                         if (_ccdsMaxTemperature == null)
                         {
                             _cpu.ActivateSensor(_ccdsMaxTemperature = new Sensor("CCDs Max (Tdie)",
@@ -344,7 +379,6 @@ internal sealed class Amd17Cpu : AmdCpu
                                                                                  _cpu,
                                                                                  _cpu._settings));
                         }
-
                         if (_ccdsAverageTemperature == null)
                         {
                             _cpu.ActivateSensor(_ccdsAverageTemperature = new Sensor("CCDs Average (Tdie)",
@@ -399,7 +433,7 @@ internal sealed class Amd17Cpu : AmdCpu
 
             if (_cpu._smu.IsPmTableLayoutDefined())
             {
-                float[] smuData = _cpu._smu.GetPmTable();
+                smuData = _cpu._smu.GetPmTable();
 
                 foreach (KeyValuePair<KeyValuePair<uint, RyzenSMU.SmuSensorType>, Sensor> sensor in _smuSensors)
                 {

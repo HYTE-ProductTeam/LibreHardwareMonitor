@@ -25,7 +25,8 @@ public static class Ring0
 
     public static void Open()
     {
-        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "modules");
+        //var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "modules");
+        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "modules");
         _pawnIO = new PawnIoBackend(modulesDir);
         if (Directory.Exists(modulesDir) && _pawnIO != null)
         {
@@ -292,6 +293,49 @@ public static class Ring0
         if (ok) _pciCache[key] = (value, now);
         return ok;
     }
+
+    // ===== Ryzen SMU (Ring0 facade) =============================================
+
+    public static bool SmuIsAvailable => IsOpen && _pawnIO.SmuAvailable;
+
+    public static bool SmuGetVersion(out uint version)
+    {
+        version = 0; if (!IsOpen) return false;
+        return _pawnIO.SmuTryGetVersion(out version);
+    }
+
+    public static bool SmuGetCodeName(out uint codeName)
+    {
+        codeName = 0; if (!IsOpen) return false;
+        return _pawnIO.SmuTryGetCodeName(out codeName);
+    }
+
+    public static bool SmuResolvePmTable(out ulong pmVersion, out ulong pmBase)
+    {
+        pmVersion = 0; pmBase = 0; if (!IsOpen) return false;
+        return _pawnIO.SmuTryResolvePmTable(out pmVersion, out pmBase);
+    }
+
+    public static bool SmuUpdatePmTable()
+    {
+        if (!IsOpen) return false;
+        return _pawnIO.SmuTryUpdatePmTable();
+    }
+
+    /// <summary>讀取 PM Table 開頭 N 個 qword（含 250ms 節流）。</summary>
+    public static bool SmuReadPmTableHead(int qwordCount, out ulong[] data, bool forceRefresh = false)
+    {
+        data = Array.Empty<ulong>(); if (!IsOpen) return false;
+        return _pawnIO.SmuTryReadPmTableHead(qwordCount, out data, forceRefresh);
+    }
+
+    /// <summary>讀取指定 index 的 qword。</summary>
+    public static bool SmuReadPmQword(int index, out ulong value, bool forceRefresh = false)
+    {
+        value = 0; if (!IsOpen) return false;
+        return _pawnIO.SmuTryReadPmQword(index, out value, forceRefresh);
+    }
+
 }
 
 public readonly struct FnKey : IEquatable<FnKey>

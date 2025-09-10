@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace LibreHardwareMonitor.Hardware.PawnIO
 {
@@ -11,9 +12,20 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
         private readonly PawnIoModule _modLpcIo;
         private readonly PawnIoModule _modEc;        // 可選：筆電/特定主板才需要
         private readonly PawnIoModule _modSmbus;     // AMD 晶片組可選
-        //private readonly PawnIoModule _modRyzenSmu;  // 需要 CPU 功耗才載
+        private readonly PawnIoModule _modRyzenSmu;  // 需要 CPU 功耗才載
         private readonly PawnIoModule _modMsr;
         private U32 _lpcDetectedType;
+
+        private SmuCaps _smu;
+
+        private struct SmuCaps
+        {
+            public bool Available;      // 是否可用
+            public uint SmuVersion;     // SMU 版本
+            public uint CodeName;       // 你的 enum 值（CPU_Raphael...）
+            public ulong PmTableBase;   // PM Table 物理基址（由 ioctl_resolve_pm_table 取得）
+        }
+
         public PawnIoBackend(string modulesDir)
         {
             try
@@ -31,15 +43,14 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                 // 看看偵測輸出
                 foreach (var line in result.Log) Console.WriteLine(line);
 
-                //_modMsr = new PawnIoModule(Path.Combine(modulesDir, "IntelMSR.bin"), "IntelMSR.bin");
-                //_modLpcIo = new PawnIoModule(Path.Combine(modulesDir, "LpcIO.bin"), "LpcIO.bin");
-                //_modEc = new PawnIoModule(Path.Combine(modulesDir, "LpcACPIEC.bin"), "LpcACPIEC.bin");
-                //_modSmbus = new PawnIoModule(Path.Combine(modulesDir, "SmbusI801.bin"), "SmbusPIIX4.bin");
-
                 _modMsr = result.Msr;
                 _modLpcIo = result.LpcIo;
                 _modEc = result.Ec;
                 _modSmbus = result.Smbus;
+                _modRyzenSmu = result.RyzenSmu;
+
+                _smu = new SmuCaps { Available = false, SmuVersion = 0, CodeName = 0, PmTableBase = 0 };
+                InitRyzenSmuIfSupported();
             }
             catch (Exception ex)
             {
@@ -53,11 +64,78 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
                 _lpcDetectedType = DetectLpcIo(_modLpcIo.Handle, 1);
 
             Debug.WriteLine($"LpcIO detected type=0x{_lpcDetectedType.Val:X}");
+        }
 
-            Probe(_modLpcIo);
-            //Probe(_modEc);
-            Probe(_modSmbus);
-            Probe(_modMsr);
+        private void InitRyzenSmuIfSupported()
+        {
+            if (_modRyzenSmu == null || _modRyzenSmu.Handle == IntPtr.Zero)
+                return;
+
+            try
+            {
+                // 1) 讀 SMU 版本（有回就代表 mailbox 能用）
+                var verArr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_get_smu_version", null, expectedOutputCount: 1);
+                _smu.SmuVersion = (uint)verArr[0];
+
+                // 2) 讀 CodeName（之後可用來決定 PM Table 欄位解讀）
+                var cnArr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_get_code_name", null, expectedOutputCount: 1);
+                _smu.CodeName = (uint)cnArr[0];
+
+                // 3) 解析 PM Table：回傳兩個 qword [version, base]
+                var pm = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_resolve_pm_table", null, expectedOutputCount: 2);
+                var pmVersion = pm[0];
+                _smu.PmTableBase = pm[1];
+
+                // （可選）先把表搬到 DRAM 一次
+                TryRefreshPmTable();
+
+                _smu.Available = (_smu.PmTableBase != 0);
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"RyzenSMU init OK: smu=0x{_smu.SmuVersion:X}, codeName={_smu.CodeName}, pmBase=0x{_smu.PmTableBase:X}"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RyzenSMU init failed: {ex.Message}");
+                _smu.Available = false;
+            }
+        }
+
+        public bool TryRefreshPmTable()
+        {
+            if (!_smu.Available) return false;
+            try
+            {
+                IoctlHelper.ExecNoOut(_modRyzenSmu.Handle, "ioctl_update_pm_table", null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RyzenSMU update_pm_table failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private sealed class NamedMutexHolder : IDisposable
+        {
+            public Mutex M { get; }
+            public bool Taken { get; }
+            public NamedMutexHolder(Mutex m, bool taken) { M = m; Taken = taken; }
+            public void Dispose() { if (Taken) M.ReleaseMutex(); M.Dispose(); }
+        }
+
+        private NamedMutexHolder? AcquireNamedMutex(string name, int timeoutMs = 200)
+        {
+            try
+            {
+                var m = new Mutex(false, name);
+                if (m.WaitOne(timeoutMs))
+                    return new NamedMutexHolder(m, true);
+                m.Dispose();
+                return null;
+            }
+            catch { return null; }
         }
 
         [StructLayout(LayoutKind.Sequential)] struct U32 { public uint Val; }
@@ -542,6 +620,133 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             var handle = GCHandle.Alloc(dst, GCHandleType.Pinned);
             try { Marshal.Copy(data, 0, handle.AddrOfPinnedObject(), elemSize * dst.Length); }
             finally { handle.Free(); }
+        }
+
+        // ===== Ryzen SMU (Public API) =================================================
+
+        private readonly object _smuLock = new();
+        private const int PM_TABLE_QWORDS_MAX = 512;   // ioctl_read_pm_table 一次最多回 4KB = 512 qword
+        private const int PM_TABLE_TTL_MS = 250;       // 讀表節流（避免頻繁打 mailbox）
+        private ulong[] _pmHeadCache = Array.Empty<ulong>();
+        private int _pmHeadCacheCount = 0;
+        private int _pmHeadStampMs = -1;
+
+        /// <summary>SMU 是否可用（Zen/Zen2/3/4/5 成功初始化）</summary>
+        public bool SmuAvailable => _smu.Available;
+
+        /// <summary>取得 SMU 版本。</summary>
+        public bool SmuTryGetVersion(out uint version)
+        {
+            version = 0;
+            if (!_smu.Available) return false;
+            version = _smu.SmuVersion;
+            return true;
+        }
+
+        /// <summary>取得 CPU CodeName（你的 Pawn 模組 enum 值）。</summary>
+        public bool SmuTryGetCodeName(out uint codeName)
+        {
+            codeName = 0;
+            if (!_smu.Available) return false;
+            codeName = _smu.CodeName;
+            return true;
+        }
+
+        /// <summary>解析 PM Table（版本與基址），同 ioctl_resolve_pm_table。</summary>
+        public bool SmuTryResolvePmTable(out ulong pmVersion, out ulong pmBase)
+        {
+            pmVersion = 0; pmBase = 0;
+            if (_modRyzenSmu == null || _modRyzenSmu.Handle == IntPtr.Zero) return false;
+
+            lock (_smuLock)
+            {
+                try
+                {
+                    // 依模組註解，建議取得 "\BaseNamedObjects\Access_PCI"；使用者態用 Global\
+                    using var _ = AcquireNamedMutex(@"Global\Access_PCI");
+                    var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_resolve_pm_table", null, expectedOutputCount: 2);
+                    pmVersion = arr[0];
+                    pmBase = arr[1];
+                    _smu.PmTableBase = pmBase;
+                    _smu.Available = pmBase != 0;
+                    // 重置快取
+                    _pmHeadCache = Array.Empty<ulong>();
+                    _pmHeadCacheCount = 0;
+                    _pmHeadStampMs = -1;
+                    return _smu.Available;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"RyzenSMU resolve_pm_table failed: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>請求 SMU 搬運/更新 PM Table 到 DRAM。</summary>
+        public bool SmuTryUpdatePmTable()
+        {
+            return TryRefreshPmTable();
+        }
+
+        /// <summary>
+        /// 讀回 PM Table 開頭 N 個 qword（最多 512），內建 250ms 節流快取。
+        /// </summary>
+        public bool SmuTryReadPmTableHead(int qwordCount, out ulong[] data, bool forceRefresh = false)
+        {
+            data = Array.Empty<ulong>();
+            if (!_smu.Available) return false;
+            if (qwordCount <= 0) return false;
+            qwordCount = Math.Min(qwordCount, PM_TABLE_QWORDS_MAX);
+
+            lock (_smuLock)
+            {
+                int now = Environment.TickCount;
+
+                bool hit =
+                    !forceRefresh &&
+                    _pmHeadCache.Length >= qwordCount &&
+                    _pmHeadCacheCount >= qwordCount &&
+                    _pmHeadStampMs >= 0 &&
+                    (now - _pmHeadStampMs) <= PM_TABLE_TTL_MS;
+
+                if (!hit)
+                {
+                    try
+                    {
+                        using var _ = AcquireNamedMutex(@"Global\Access_PCI");
+                        // 先可選更新一次，確保新鮮（不想每次都更就拿掉這行）
+                        // IoctlHelper.ExecNoOut(_modRyzenSmu.Handle, "ioctl_update_pm_table", null);
+
+                        var arr = IoctlHelper.ExecOutBytes(_modRyzenSmu.Handle, "ioctl_read_pm_table", null, expectedOutputCount: qwordCount);
+                        // 正常情況 arr.Length == qwordCount；若較少，照實回
+                        _pmHeadCache = arr;
+                        _pmHeadCacheCount = arr.Length;
+                        _pmHeadStampMs = now;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"RyzenSMU read_pm_table failed: {ex.Message}");
+                        return false;
+                    }
+                }
+
+                // 回傳前 qwordCount 筆（不夠時照 cache 的長度回）
+                int n = Math.Min(qwordCount, _pmHeadCacheCount);
+                data = new ulong[n];
+                Array.Copy(_pmHeadCache, 0, data, 0, n);
+                return n > 0;
+            }
+        }
+
+        /// <summary>讀單一 qword 欄位（從頭部快取取值）。</summary>
+        public bool SmuTryReadPmQword(int index, out ulong value, bool forceRefresh = false)
+        {
+            value = 0;
+            if (index < 0 || index >= PM_TABLE_QWORDS_MAX) return false;
+            if (!SmuTryReadPmTableHead(index + 1, out var head, forceRefresh)) return false;
+            value = head[index];
+            return true;
         }
     }
 }
