@@ -1,6 +1,8 @@
 ﻿using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.Hardware.PawnIO;
 using pawnIO_test_app.Components;
 using pawnIO_test_app.Controller;
 
@@ -23,6 +25,13 @@ namespace pawnIO_test_app
             computer = _helper.Computer;
 
             PlotHardwareInfo();
+
+            foreach(string log in PawnIoBootstrap.Logs)
+            {
+                TextBlock textBlock = new TextBlock();
+                textBlock.Text = log;
+                LogPanel.Children.Add(textBlock);
+            }
 
             //StartUpdate();
         }

@@ -9,15 +9,22 @@
         mc:Ignorable="d"
         Title="MainWindow" Height="840" Width="730" Closing="Window_Closing">
 
-    <StackPanel Orientation="Horizontal">
-        <components:SideMenu x:Name="SideMenuComp"/>
-        <StackPanel x:Name="InfoPanel">
-            <ScrollViewer Height="800" VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="SensorPanel" Orientation="Vertical"/>
-            </ScrollViewer>
+    <StackPanel Orientation="Vertical">
+        <StackPanel Orientation="Horizontal">
+            <components:SideMenu x:Name="SideMenuComp"/>
+            <StackPanel x:Name="InfoPanel">
+                <ScrollViewer Height="600" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="SensorPanel" Orientation="Vertical"/>
+                </ScrollViewer>
+            </StackPanel>
+            <StackPanel x:Name="FanPanel" Visibility="Hidden">
+                <fanControl:FanPage/>
+            </StackPanel>
         </StackPanel>
-        <StackPanel x:Name="FanPanel" Visibility="Hidden">
-            <fanControl:FanPage/>
+        <StackPanel>
+            <ScrollViewer Height="200" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="LogPanel" Orientation="Vertical"/>
+            </ScrollViewer>
         </StackPanel>
     </StackPanel>
 </Window>

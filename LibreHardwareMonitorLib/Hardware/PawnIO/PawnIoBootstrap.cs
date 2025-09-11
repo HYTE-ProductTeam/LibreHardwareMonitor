@@ -16,6 +16,11 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
 {
     public static class PawnIoBootstrap
     {
+
+        public static int Model;
+        public static int Family;
+        public static List<string> Logs;
+
         public sealed class InitResult
         {
             public PawnIoModule? Msr { get; private set; }
@@ -42,6 +47,8 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             // 1) CPU / MSR
             var cpu = DetectCpu();
             r.Log.Add($"CPU Vendor={cpu.Vendor}, Family=0x{cpu.Family:X}, Model=0x{cpu.Model:X}");
+            Model = cpu.Model;
+            Family = cpu.Family;
 
             if (cpu.Vendor == CpuVendor.Intel)
             {
@@ -85,6 +92,7 @@ namespace LibreHardwareMonitor.Hardware.PawnIO
             TryLoad(smbusBin, modulesDir, out var smbus, r.Log);
             r.SetSmbus(smbus);
 
+            Logs = r.Log;
             return r;
         }
 

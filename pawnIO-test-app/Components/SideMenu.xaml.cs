@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using LibreHardwareMonitor.Hardware.PawnIO;
 
 namespace pawnIO_test_app.Components
 {
@@ -14,6 +15,8 @@ namespace pawnIO_test_app.Components
         public SideMenu()
         {
             InitializeComponent();
+            FamilyTB.Text = $"Family {PawnIoBootstrap.Family}";
+            ModelTB.Text = $"Model {PawnIoBootstrap.Model}";
         }
 
         private void Info_Button_Click(object sender, RoutedEventArgs e)

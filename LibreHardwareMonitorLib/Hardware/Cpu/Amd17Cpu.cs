@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using LibreHardwareMonitor.Hardware.PawnIO;
 
 namespace LibreHardwareMonitor.Hardware.Cpu;
 
@@ -178,17 +179,11 @@ internal sealed class Amd17Cpu : AmdCpu
             float[] smuData = _cpu._smu.GetPmTable();
             if (smuData != null && smuData.Length > 0)
             {
-                // ---- Tdie ----
-                var tdieKvp = _cpu._smu.GetPmTableStructure()
-                    .FirstOrDefault(kv =>
-                        kv.Value.Type == SensorType.Temperature &&
-                        !string.IsNullOrEmpty(kv.Value.Name) &&
-                        (kv.Value.Name.Contains("Tdie") ||
-                         kv.Value.Name.Contains("Tctl/Tdie")));
+                PawnIoBootstrap.Logs.Add($"smuData != null, {smuData}");
 
-                if (!string.IsNullOrEmpty(tdieKvp.Value.Name) && tdieKvp.Key < smuData.Length)
+                if (TryGetCpuTctlIndexFromSmu(_cpu._smu, out uint tdieIdx) && tdieIdx < smuData.Length)
                 {
-                    float t = smuData[tdieKvp.Key] * tdieKvp.Value.Scale;
+                    float t = smuData[tdieIdx];
                     _coreTemperatureTdie.Value = t;
                     _cpu.ActivateSensor(_coreTemperatureTdie);
 
@@ -197,6 +192,30 @@ internal sealed class Amd17Cpu : AmdCpu
 
                     gotTempFromSmu = true;
                 }
+
+
+                //// ---- Tdie ----
+                //var tdieKvp = _cpu._smu.GetPmTableStructure()
+                //    .FirstOrDefault(kv =>
+                //        kv.Value.Type == SensorType.Temperature &&
+                //        !string.IsNullOrEmpty(kv.Value.Name) &&
+                //        (kv.Value.Name.Contains("Tdie") ||
+                //         kv.Value.Name.Contains("Tctl/Tdie")));
+
+                //PawnIoBootstrap.Logs.Add($"tdieKvp: {tdieKvp}");
+
+                //if (!string.IsNullOrEmpty(tdieKvp.Value.Name) && tdieKvp.Key < smuData.Length)
+                //{
+                //    PawnIoBootstrap.Logs.Add($"tdieKvp found: {tdieKvp.Key}");
+                //    float t = smuData[tdieKvp.Key] * tdieKvp.Value.Scale;
+                //    _coreTemperatureTdie.Value = t;
+                //    _cpu.ActivateSensor(_coreTemperatureTdie);
+
+                //    _coreTemperatureTctlTdie.Value = t;
+                //    _cpu.ActivateSensor(_coreTemperatureTctlTdie);
+
+                //    gotTempFromSmu = true;
+                //}
 
                 // ---- Package Power ----
                 var pkgKvp = _cpu._smu.GetPmTableStructure()
@@ -209,12 +228,17 @@ internal sealed class Amd17Cpu : AmdCpu
 
                 if (!string.IsNullOrEmpty(pkgKvp.Value.Name) && pkgKvp.Key < smuData.Length)
                 {
-                    float w = smuData[pkgKvp.Key] * pkgKvp.Value.Scale;
-                    _packagePower.Value = w;
+                    //float w = smuData[pkgKvp.Key] * pkgKvp.Value.Scale;
+                    //_packagePower.Value = w;
+                    //_cpu.ActivateSensor(_packagePower);
+                    //gotPkgFromSmu = true;
+
+                    _packagePower.Value = smuData[pkgKvp.Key] * pkgKvp.Value.Scale;
                     _cpu.ActivateSensor(_packagePower);
-                    gotPkgFromSmu = true;
                 }
             }
+
+            PawnIoBootstrap.Logs.Add($"smuData == null, {smuData}");
 
             uint smuSvi0Tfn = 0;
             uint smuSvi0TelPlane0 = 0;
@@ -445,6 +469,48 @@ internal sealed class Amd17Cpu : AmdCpu
                     }
                 }
             }            
+        }
+
+        private static bool TryGetCpuTctlIndexFromSmu(RyzenSMU smu, out uint index)
+        {
+            index = 0;
+
+            // 先找標準名（你在 RyzenSMU.NormalizePmLayoutNames() 會把Zen4:11改名成 "Core (Tctl/Tdie)"）
+            var pm = smu.GetPmTableStructure();
+            var kv = pm.FirstOrDefault(k =>
+                k.Value.Type == SensorType.Temperature &&
+                !string.IsNullOrEmpty(k.Value.Name) &&
+                (k.Value.Name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 k.Value.Name.IndexOf("Tdie", StringComparison.OrdinalIgnoreCase) >= 0));
+            if (!string.IsNullOrEmpty(kv.Value.Name))
+            {
+                index = kv.Key;
+                return true;
+            }
+
+            // 再來：同義詞（避免舊layout還叫 "Package" / "CPU"）
+            var ok = new[] { "package", "cpu" };
+            var bad = new[] { "ccd", "l3", "iod", "hotspot" };
+            kv = pm.FirstOrDefault(k =>
+                k.Value.Type == SensorType.Temperature &&
+                !string.IsNullOrEmpty(k.Value.Name) &&
+                ok.Any(s => k.Value.Name.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0) &&
+                !bad.Any(s => k.Value.Name.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0));
+            if (!string.IsNullOrEmpty(kv.Value.Name))
+            {
+                index = kv.Key;
+                return true;
+            }
+
+            // 最後：已知版本兜底（例如 Zen4 0x00540004 → 11）
+            var ver = smu.GetPmTableVersion();
+            if (ver == 0x00540004) // Zen4
+            {
+                index = 11;
+                return true;
+            }
+
+            return false;
         }
 
         public void UpdateVirtualSensor()

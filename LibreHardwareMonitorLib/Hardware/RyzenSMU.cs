@@ -3,8 +3,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
+using LibreHardwareMonitor.Hardware.PawnIO;
 
 // ReSharper disable InconsistentNaming
 
@@ -19,6 +21,8 @@ internal class RyzenSMU
 
     private readonly CpuCodeName _cpuCodeName;
     private readonly bool _supportedCPU;
+
+    public uint GetPmTableVersion() => _pmTableVersion;
 
     private readonly Dictionary<uint, Dictionary<uint, SmuSensorType>> _supportedPmTableVersions = new()
     {
@@ -170,11 +174,146 @@ internal class RyzenSMU
         {
             _pmTableVersion = ver;
             _supportedCPU = Ring0.SmuIsAvailable && baseAddr != 0;
+            PawnIoBootstrap.Logs.Add($"Support CPU is {_pmTableVersion}");
         }
         else
         {
             _pmTableVersion = 0;
             _supportedCPU = false;
+        }
+
+        if (_supportedCPU)
+            NormalizePmLayoutNames();
+    }
+
+    private void NormalizePmLayoutNames()
+    {
+        // 先處理已知版本的固定索引（例如 Zen4）
+        if (_supportedPmTableVersions.TryGetValue(_pmTableVersion, out var map))
+        {
+            // Zen 4: 0x00540004，index 11 是 CPU 溫度，原本名稱是 "Package"
+            if (_pmTableVersion == 0x00540004 && map.TryGetValue(11, out var t))
+            {
+                t.Name = "Core (Tctl/Tdie)";
+                t.Type = SensorType.Temperature;
+                t.Scale = 1;
+                map[11] = t;
+            }
+        }
+
+        // 如果名稱裡找不到任何 Tctl/Tdie，就動態偵測一個「像 CPU 溫度」的索引，並掛上標準名
+        if (!HasCpuTempName())
+        {
+            PawnIoBootstrap.Logs.Add($"Can't find CPU temp");
+            if (TryProbeCpuTempIndex(out var idx))
+            {
+                AddOrRenameAsCpuTctlTdie(idx);
+                PawnIoBootstrap.Logs.Add($"Can't find CPU temp, add {idx}");
+            }
+        }
+    }
+
+    private bool TryProbeCpuTempIndex(out uint index)
+    {
+        index = 0;
+
+        var layout = GetPmTableStructure();         // 可能是空（未定義）
+        var data = GetPmTable();                    // 讀一次現值
+        if (data == null || data.Length == 0)
+            return false;
+
+        var maxScan = Math.Min(data.Length, 600);   // 足夠涵蓋常見欄位
+        var okWords = new[] { "package", "cpu", "tctl", "tdie" };
+        var badWords = new[] { "ccd", "l3", "iod", "hotspot" };
+
+        int bestScore = int.MinValue;
+        uint bestIdx = 0;
+
+        for (uint i = 0; i < maxScan; i++)
+        {
+            float v = data[i];
+            if (float.IsNaN(v) || v <= 0) continue;
+
+            // 溫度合理範圍（攝氏）
+            if (v < 5 || v > 125) continue;
+
+            // 若 layout 有名字，排除不該當 CPU 的
+            string name = string.Empty;
+            if (layout.TryGetValue(i, out var t) && !string.IsNullOrEmpty(t.Name))
+            {
+                name = t.Name;
+                if (badWords.Any(w => name.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0))
+                    continue;
+            }
+
+            // 計分：名稱越像 CPU/Tctl/Tdie 分數越高；沒有名稱也可，但分數較低
+            int score = 0;
+            if (!string.IsNullOrEmpty(name))
+            {
+                if (okWords.Any(w => name.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0)) score += 3;
+                if (name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+                if (name.IndexOf("Tdie", StringComparison.OrdinalIgnoreCase) >= 0) score += 3;
+                if (name.IndexOf("Tctl", StringComparison.OrdinalIgnoreCase) >= 0) score += 2;
+            }
+            else
+            {
+                // 沒名字：給個基礎分
+                score += 1;
+            }
+
+            // 額外：偏好靠近我們已知的 CPU 群（例如 Zen4 的 11）
+            if (_pmTableVersion == 0x00540004 && i == 11) score += 5;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+
+        if (bestScore > int.MinValue)
+        {
+            index = bestIdx;
+            return true;
+        }
+        return false;
+    }
+
+
+    private bool HasCpuTempName()
+    {
+        var dict = GetPmTableStructure();
+        foreach (var kv in dict)
+        {
+            var name = kv.Value.Name ?? string.Empty;
+            if (name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("Tdie", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    private void AddOrRenameAsCpuTctlTdie(uint index)
+    {
+        var dict = GetPmTableStructure();
+        if (dict.Count == 0)
+            return;
+
+        if (dict.TryGetValue(index, out var t))
+        {
+            t.Name = "Core (Tctl/Tdie)";
+            t.Type = SensorType.Temperature;
+            t.Scale = 1;
+            dict[index] = t;
+        }
+        else
+        {
+            dict[index] = new SmuSensorType
+            {
+                Name = "Core (Tctl/Tdie)",
+                Type = SensorType.Temperature,
+                Scale = 1
+            };
         }
     }
 
@@ -212,10 +351,21 @@ internal class RyzenSMU
         if (!Ring0.SmuReadPmTableHead(512, out var raw, forceRefresh: false))
             return Array.Empty<float>();
 
-        var arr = new float[raw.Length];
-        for (int i = 0; i < raw.Length; i++)
-            arr[i] = LowDwordToFloat(raw[i]);   // decode low 32-bit as float
+        //var arr = new float[raw.Length];
+        //for (int i = 0; i < raw.Length; i++)
+        //    arr[i] = LowDwordToFloat(raw[i]);   // decode low 32-bit as float
 
+        //return arr;
+        var arr = new float[raw.Length * 2];
+        for (int i = 0; i < raw.Length; i++)
+        {
+            ulong q = raw[i];
+            uint lo = (uint)(q & 0xFFFFFFFF);
+            uint hi = (uint)(q >> 32);
+
+            arr[i * 2] = BitConverter.ToSingle(BitConverter.GetBytes(lo), 0);
+            arr[i * 2 + 1] = BitConverter.ToSingle(BitConverter.GetBytes(hi), 0);
+        }
         return arr;
     }
 
