@@ -23,19 +23,60 @@ public static class Ring0
 
     private static PawnIoBackend _pawnIO;
 
-    public static void Open()
+    public static bool Open()
     {
-        //var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "modules");
-        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "modules");
+        var installResult = EnsurePawnIoInstalled();
+        if (!installResult)
+            return false;
+        var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "modules");
+        //var modulesDir = Path.Combine(Directory.GetCurrentDirectory(), "modules");
         _pawnIO = new PawnIoBackend(modulesDir);
         if (Directory.Exists(modulesDir) && _pawnIO != null)
         {
             _report.Length = 0;
             _report.AppendLine("Status: PawnIO backend active");
-            return;
+            return IsOpen;
         }
 
-        return;
+        return false;
+    }
+
+    private static bool EnsurePawnIoInstalled()
+    {
+        var sc = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "sc",
+                Arguments = "query PawnIO",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        sc.Start();
+        string output = sc.StandardOutput.ReadToEnd();
+        sc.WaitForExit();
+
+        if (!output.Contains("PawnIO"))
+        {
+            // 沒找到 → 安裝
+            var installer = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = Path.Combine(Directory.GetCurrentDirectory(), "resources", "PawnIO", "PawnIO_setup.exe"),
+                    Arguments = "-install -silent",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            installer.Start();
+            installer.WaitForExit();
+            return installer.ExitCode == 0;
+        }
+
+        return true;
     }
 
     public static void Close()

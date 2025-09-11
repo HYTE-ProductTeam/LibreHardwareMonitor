@@ -238,8 +238,6 @@ internal sealed class Amd17Cpu : AmdCpu
                 }
             }
 
-            PawnIoBootstrap.Logs.Add($"smuData == null, {smuData}");
-
             uint smuSvi0Tfn = 0;
             uint smuSvi0TelPlane0 = 0;
             uint smuSvi0TelPlane1 = 0;

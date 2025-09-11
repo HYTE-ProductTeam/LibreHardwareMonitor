@@ -490,7 +490,14 @@ public class Computer : IComputer
 
         _smbios = new SMBios();
 
-        Ring0.Open();
+        bool pawnioOpen = Ring0.Open();
+
+        if (!pawnioOpen)
+        {
+            _open = false;
+            return;
+        }
+
         Mutexes.Open();
         OpCode.Open();
 
