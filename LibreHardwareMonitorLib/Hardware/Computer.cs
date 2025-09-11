@@ -483,10 +483,10 @@ public class Computer : IComputer
     /// If hasn't been opened before, opens <see cref="SMBios" />, <see cref="Ring0" />, <see cref="OpCode" /> and triggers the private <see cref="AddGroups" /> method depending on which categories are
     /// enabled.
     /// </summary>
-    public void Open()
+    public bool Open()
     {
         if (_open)
-            return;
+            return true;
 
         _smbios = new SMBios();
 
@@ -495,7 +495,7 @@ public class Computer : IComputer
         if (!pawnioOpen)
         {
             _open = false;
-            return;
+            return false;
         }
 
         Mutexes.Open();
@@ -504,6 +504,7 @@ public class Computer : IComputer
         AddGroups();
 
         _open = true;
+        return true;
     }
 
     private void AddGroups()
