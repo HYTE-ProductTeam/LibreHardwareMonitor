@@ -34,7 +34,7 @@ public class Computer : IComputer
     private readonly List<IGroup> _groups = new();
     private readonly object _lock = new();
     private readonly ISettings _settings;
-        
+
     private bool _batteryEnabled;
     private bool _controllerEnabled;
     private bool _cpuEnabled;
@@ -320,14 +320,6 @@ public class Computer : IComputer
             w.WriteLine(IntPtr.Size == 4 ? "32-Bit" : "64-Bit");
             w.WriteLine();
 
-            string r = Ring0.GetReport();
-            if (r != null)
-            {
-                NewSection(w);
-                w.Write(r);
-                w.WriteLine();
-            }
-
             NewSection(w);
             w.WriteLine("Sensors");
             w.WriteLine();
@@ -463,7 +455,7 @@ public class Computer : IComputer
 
     private void RemoveType<T>() where T : IGroup
     {
-        List<T> list = new();
+        List<T> list = [];
 
         lock (_lock)
         {
@@ -479,7 +471,7 @@ public class Computer : IComputer
     }
 
     /// <summary>
-    /// If hasn't been opened before, opens <see cref="SMBios" />, <see cref="Ring0" />, <see cref="OpCode" /> and triggers the private <see cref="AddGroups" /> method depending on which categories are
+    /// If hasn't been opened before, opens <see cref="SMBios" />, <see cref="OpCode" /> and triggers the private <see cref="AddGroups" /> method depending on which categories are
     /// enabled.
     /// </summary>
     public void Open()
@@ -489,7 +481,6 @@ public class Computer : IComputer
 
         _smbios = new SMBios();
 
-        Ring0.Open();
         Mutexes.Open();
         OpCode.Open();
 
@@ -614,7 +605,7 @@ public class Computer : IComputer
     }
 
     /// <summary>
-    /// If opened before, removes all <see cref="IGroup" /> and triggers <see cref="OpCode.Close" />, <see cref="InpOut.Close" /> and <see cref="Ring0.Close" />.
+    /// If opened before, removes all <see cref="IGroup" /> and triggers <see cref="OpCode.Close" />.
     /// </summary>
     public void Close()
     {
@@ -631,8 +622,6 @@ public class Computer : IComputer
         }
 
         OpCode.Close();
-        InpOut.Close();
-        Ring0.Close();
         Mutexes.Close();
 
         _smbios = null;
