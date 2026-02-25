@@ -13,10 +13,11 @@ namespace LibreHardwareMonitor.PawnIo;
 
 public class PawnIo
 {
-    private const uint DEVICE_TYPE = 41394u << 16;
+    private const uint DEVICE_TYPE = 54321u << 16;
     private const int FN_NAME_LENGTH = 32;
     private const uint IOCTL_PIO_EXECUTE_FN = 0x841 << 2;
     private const uint IOCTL_PIO_LOAD_BINARY = 0x821 << 2;
+    private const string DEVICE_NAME = @"\\?\GLOBALROOT\Device\HYTEIO";
 
     private readonly SafeFileHandle _handle;
 
@@ -64,7 +65,7 @@ public class PawnIo
 
     internal static unsafe PawnIo LoadModuleFromResource(Assembly assembly, string resourceName)
     {
-        SafeFileHandle handle = PInvoke.CreateFile(@"\\?\GLOBALROOT\Device\PawnIO",
+        SafeFileHandle handle = PInvoke.CreateFile(DEVICE_NAME,
                                                    (uint)FileAccess.ReadWrite,
                                                    FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE,
                                                    null,
